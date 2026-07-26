@@ -42,13 +42,13 @@ test_herdr_installer_pins_exact_version_and_checksums() {
 }
 
 test_treehouse_installer_pins_exact_version_and_checksums() {
-  assert_grep 'FM_TREEHOUSE_CI_VERSION=2.0.1' "$TREEHOUSE_INSTALL" \
-    "Treehouse installer must pin the suite-verified 2.0.1 release"
+  assert_grep 'FM_TREEHOUSE_CI_VERSION=2.1.0' "$TREEHOUSE_INSTALL" \
+    "Treehouse installer must pin the suite-verified 2.1.0 release"
   assert_grep 'kunchenguid/treehouse' "$TREEHOUSE_INSTALL" \
     "Treehouse installer must use the official GitHub release source"
   assert_grep 'linux-amd64.tar.gz' "$TREEHOUSE_INSTALL" \
     "Treehouse installer must name the Linux amd64 archive"
-  assert_grep '1d5a32751ab921670103fd201ddb2b91b47338cb13976f45642b827cf8976af2' "$TREEHOUSE_INSTALL" \
+  assert_grep 'ff030255663bb5d384309cdf1b3a0bd62006e0ac978340d292039697cb70c225' "$TREEHOUSE_INSTALL" \
     "Treehouse installer must pin the Linux amd64 SHA-256"
   assert_grep '--max-filesize' "$TREEHOUSE_INSTALL" \
     "Treehouse installer must bound the download size"
