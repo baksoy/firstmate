@@ -644,10 +644,12 @@ escalate_add() {  # <state> <distilled-item>
 }
 
 # Flush the escalation buffer as ONE batched, single-line digest to the
-# supervisor pane. Returns 0 on successful inject (or empty buffer), non-zero on
-# inject failure (buffer preserved for retry / catch-up).
+# supervisor pane. Returns 0 on successful inject (or empty buffer). On failure
+# the buffer is preserved for retry / catch-up and the exit code is inject_msg's
+# verbatim (1 = deferred before typing, 2 = typed but submit unconfirmed), so
+# escalate_flush_capped can count only the typed-unconfirmed case toward the cap.
 escalate_flush() {  # <state>
-  local state=$1 buf item n msg
+  local state=$1 buf item n msg irc
   buf="$state/.subsuper-escalations"
   [ -s "$buf" ] || return 0
   n=$(wc -l < "$buf" 2>/dev/null || echo 0)
@@ -656,8 +658,9 @@ escalate_flush() {  # <state>
   # Single-line wrapper: no embedded newlines (inject_msg also collapses as a
   # safety net, but keeping the source single-line makes the intent explicit).
   msg=$(printf 'Supervisor escalate (%s event(s)): %s (pre-read; re-arm not needed — watcher daemon-managed)' "$n" "$msg")
-  if inject_msg "$msg" "$state"; then : > "$buf"; rm -f "${buf}.since" "$state/.subsuper-inject-wedged"; return 0; fi
-  return 1
+  inject_msg "$msg" "$state"; irc=$?
+  if [ "$irc" -eq 0 ]; then : > "$buf"; rm -f "${buf}.since" "$state/.subsuper-inject-wedged"; return 0; fi
+  return "$irc"
 }
 
 # --- bounded re-injection cap (composer-confirmation false-negative guard) ---
@@ -666,16 +669,22 @@ escalate_flush() {  # <state>
 # escalate_flush report the submit unconfirmed even though delivery happened.
 # Without a bound, housekeeping's per-tick batch flush would re-inject the SAME
 # digest every tick indefinitely (the overnight ~10h re-injection incident). The
-# cap bounds how many times ONE unchanged buffered content is (re-)injected: the
-# first flush attempt, plus the single max-defer escape flush that fires the
-# wedge alarm; after that alarm the content is CAPPED and never re-injected until
-# it CHANGES (a genuinely new escalation arrives) or delivery is later positively
-# confirmed. It bounds retry COUNT only - the buffer stays durable throughout, so
-# nothing is lost after queue publication and return catch-up still surfaces it,
-# and the wedge alarm still fires exactly once per episode.
+# cap bounds how many times ONE unchanged buffered content is TYPED into the
+# pane: the first typed attempt, plus the single max-defer escape retry that
+# fires the wedge alarm; after that alarm the content is CAPPED and never typed
+# again until it CHANGES (a genuinely new escalation arrives) or delivery is
+# later positively confirmed. It bounds typed-attempt COUNT only - the buffer
+# stays durable throughout, so nothing is lost after queue publication and return
+# catch-up still surfaces it, and the wedge alarm still fires once per episode.
+#
+# ONLY a typed-but-unconfirmed attempt (inject_msg/escalate_flush exit 2) counts
+# toward the cap. A pre-typing DEFERRAL (exit 1: pane busy, composer holds a
+# human's half-typed line, afk off) types nothing, costs nothing, and MUST keep
+# retrying every tick so the digest lands the moment the pane frees - conflating
+# it with a real failure would strand the escalation (the Scenario A regression).
 #
 # Two content-addressed markers, both keyed to the exact buffered bytes:
-#   .subsuper-inject-failed  content whose last normal flush was unconfirmed; the
+#   .subsuper-inject-failed  content whose last TYPED flush was unconfirmed; the
 #                            per-tick batch flush skips it (the max-defer escape
 #                            still gets its single forced retry).
 #   .subsuper-inject-capped  content whose max-defer escape has already alarmed;
@@ -707,12 +716,17 @@ cap_inject_content() {  # <state>
 
 # Bounded wrapper around escalate_flush. <mode> is "normal" (the per-tick batch
 # flush) or "force" (the single max-defer escape retry, which ignores the
-# already-failed marker but still honors the hard cap). Returns 0 = delivered
-# (buffer and all markers cleared), 1 = attempted and unconfirmed (content
-# recorded as failed), 2 = HELD without attempting (already failed this content
-# on a normal tick, or already capped). Never re-injects capped content.
+# already-failed marker but still honors the hard cap). Return codes:
+#   0  delivered (buffer and all cap markers cleared)
+#   1  TYPED but submit unconfirmed - the cappable false-negative; this exact
+#      content recorded as failed. The caller may raise the wedge alarm and cap.
+#   2  HELD without any typed attempt because this content is already capped, or
+#      already failed on a prior normal tick (the max-defer escape owns retry).
+#   3  DEFERRED before typing (pane busy / composer pending / afk off). Nothing
+#      was typed, no marker set: retry naturally next tick. Never a cap trip.
+# Never re-types capped content.
 escalate_flush_capped() {  # <state> <mode>
-  local state=$1 mode=${2:-normal} h capped failed
+  local state=$1 mode=${2:-normal} h capped failed frc
   [ -s "$state/.subsuper-escalations" ] || { reset_inject_cap "$state"; return 0; }
   h=$(_inject_content_hash "$state") || { reset_inject_cap "$state"; return 0; }
   capped=$(cat "$state/.subsuper-inject-capped" 2>/dev/null || true)
@@ -722,15 +736,15 @@ escalate_flush_capped() {  # <state> <mode>
   if [ "$mode" != force ]; then
     failed=$(cat "$state/.subsuper-inject-failed" 2>/dev/null || true)
     if [ "$h" = "$failed" ]; then
-      return 2  # Already failed this content; the max-defer escape owns the retry.
+      return 2  # Already typed+failed this content; the max-defer escape owns the retry.
     fi
   fi
-  if escalate_flush "$state"; then
-    reset_inject_cap "$state"
-    return 0
-  fi
-  printf '%s' "$h" > "$state/.subsuper-inject-failed"
-  return 1
+  escalate_flush "$state"; frc=$?
+  case "$frc" in
+    0) reset_inject_cap "$state"; return 0 ;;  # confirmed delivery
+    2) printf '%s' "$h" > "$state/.subsuper-inject-failed"; return 1 ;;  # typed, unconfirmed
+    *) return 3 ;;  # deferred before typing: nothing to cap, retry next tick
+  esac
 }
 
 # --- backend-independent active wedge alert ---------------------------------
@@ -1037,7 +1051,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs rc
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs rc h failed
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
@@ -1066,16 +1080,28 @@ housekeeping() {  # <state>
        && [ "$(_file_age "$state/.subsuper-inject-wedged")" -ge "$max_defer" ]; then
       # The single escape retry for this content. force ignores the per-tick
       # failed marker but still honors the hard cap, so once the wedge alarm has
-      # fired for this exact content the flush returns 2 (held) and neither
-      # re-injects nor re-alarms - a confirmation false-negative costs at most
-      # this one alarm, not an all-night re-injection loop.
+      # fired for a typed-but-unconfirmed content the flush returns 2 (held) and
+      # neither re-types nor re-alarms - a confirmation false-negative costs at
+      # most this one alarm, not an all-night re-injection loop.
       escalate_flush_capped "$state" force; rc=$?
       case "$rc" in
         0) log "inject recovered: max-defer flush succeeded after ${oldest}s undelivered"
            rm -f "$state/.subsuper-inject-wedged" ;;
         1) inject_wedge_alarm "$state" "$oldest"
-           cap_inject_content "$state" ;;
+           cap_inject_content "$state" ;;  # typed+unconfirmed: alarm, then cap re-typing
         2) : ;;  # already capped for this content: hold durably, do not re-alarm
+        3) inject_wedge_alarm "$state" "$oldest"
+           # Deferred before typing on this escape. If this exact content was
+           # already typed-but-unconfirmed on a prior flush (its failed marker
+           # matches), the deferral is that false-negative's own residue (its
+           # swallowed text still sitting in the composer), so cap it - the wedge
+           # alarm has fired and re-typing would just repeat the loop. A content
+           # that was NEVER typed (a genuine pane-busy / half-typed human line)
+           # has no failed marker: leave it uncapped so it keeps retrying and
+           # lands the moment the pane frees.
+           h=$(_inject_content_hash "$state" 2>/dev/null || true)
+           failed=$(cat "$state/.subsuper-inject-failed" 2>/dev/null || true)
+           if [ -n "$h" ] && [ "$h" = "$failed" ]; then cap_inject_content "$state"; fi ;;
       esac
     fi
   fi
@@ -1182,10 +1208,17 @@ window_for_task() {  # <task-key> [state]
 
 # --- injection --------------------------------------------------------------
 # inject_msg: send one escalation digest to the supervisor pane.
-# Returns 0 on successful inject (or empty buffer), non-zero if the pane is
-# gone, the supervisor is busy, afk is inactive, or the verified submit cannot
-# be confirmed after bounded retries. On non-zero the caller preserves
-# the buffer so the escalation survives for the next cycle or the catch-up flush.
+# Returns 0 on successful inject (or empty buffer). On failure the caller
+# preserves the buffer so the escalation survives for the next cycle or the
+# catch-up flush, and the exit code distinguishes WHY, because the re-injection
+# cap treats the two cases differently (see escalate_flush_capped):
+#   1  DEFERRED before typing anything - pane gone, supervisor busy, afk
+#      inactive, or composer not confirmed-empty. Nothing was typed, so this is
+#      free to retry every tick and must NEVER count toward the cap.
+#   2  TYPED but the submit could not be confirmed after bounded retries - the
+#      digest was actually sent into the composer. A persistent verdict here is
+#      the confirmation false-negative that drove the overnight re-injection
+#      loop, so ONLY this case counts toward the hard cap.
 #
 # Submit model:
 #   - TYPE ONCE, then submit with Enter. Never retype the digest: a swallowed
@@ -1255,7 +1288,7 @@ inject_msg() {  # <message> [state]
     return 0  # Backend confirmed the submit.
   fi
   log "inject failed: submit unconfirmed after $retries retries (verdict=$verdict, text may be in composer)"
-  return 1
+  return 2  # TYPED but submit unconfirmed - the cappable false-negative.
 }
 
 # --- INJECT_SKIP prefix match (literal prefixes, no regex) ------------------
