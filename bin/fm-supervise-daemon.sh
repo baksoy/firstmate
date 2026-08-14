@@ -51,7 +51,11 @@
 #     Buffered escalation delivery also has a max-defer alarm: if a digest stays
 #     undelivered past FM_MAX_DEFER_SECS, the daemon retries a normal flush and
 #     writes state/.subsuper-inject-wedged and attempts a configurable active
-#     alert if submit still cannot be confirmed.
+#     alert if submit still cannot be confirmed. Re-injection is then hard-capped
+#     per buffered content (see escalate_flush_capped): a submit-confirmation
+#     false-negative costs at most one alarm, never an all-night re-injection
+#     loop. The cap bounds retry COUNT only; the buffer stays durable, so nothing
+#     is lost after queue publication and return catch-up still surfaces it.
 #   - Cheap heartbeat catch-all: every HEARTBEAT_SCAN_SECS the daemon greps all
 #     state/*.status for a captain-relevant line the per-wake classifier might
 #     have missed (e.g. a status verb outside CAPTAIN_RE) and escalates it.
@@ -656,6 +660,79 @@ escalate_flush() {  # <state>
   return 1
 }
 
+# --- bounded re-injection cap (composer-confirmation false-negative guard) ---
+# A composer-confirmation false-negative (a digest that lands and starts a real
+# turn while the idle composer is briefly misread as still holding text) makes
+# escalate_flush report the submit unconfirmed even though delivery happened.
+# Without a bound, housekeeping's per-tick batch flush would re-inject the SAME
+# digest every tick indefinitely (the overnight ~10h re-injection incident). The
+# cap bounds how many times ONE unchanged buffered content is (re-)injected: the
+# first flush attempt, plus the single max-defer escape flush that fires the
+# wedge alarm; after that alarm the content is CAPPED and never re-injected until
+# it CHANGES (a genuinely new escalation arrives) or delivery is later positively
+# confirmed. It bounds retry COUNT only - the buffer stays durable throughout, so
+# nothing is lost after queue publication and return catch-up still surfaces it,
+# and the wedge alarm still fires exactly once per episode.
+#
+# Two content-addressed markers, both keyed to the exact buffered bytes:
+#   .subsuper-inject-failed  content whose last normal flush was unconfirmed; the
+#                            per-tick batch flush skips it (the max-defer escape
+#                            still gets its single forced retry).
+#   .subsuper-inject-capped  content whose max-defer escape has already alarmed;
+#                            every flush path skips it until it changes.
+# A successful escalate_flush clears the buffer and its .since/wedged markers;
+# escalate_flush_capped then clears both cap markers, so a later positively
+# confirmed delivery fully restores normal injection.
+
+# Stable hash of the buffered escalation content; fails (non-zero) if empty.
+_inject_content_hash() {  # <state>
+  local buf=$1/.subsuper-escalations
+  [ -s "$buf" ] || return 1
+  _hash_text "$(cat "$buf" 2>/dev/null)"
+}
+
+# Clear the cap tracking (both markers). Called when the buffer drains or a flush
+# is positively confirmed.
+reset_inject_cap() {  # <state>
+  rm -f "$1/.subsuper-inject-failed" "$1/.subsuper-inject-capped"
+}
+
+# Mark the current buffered content as capped (its max-defer escape has fired the
+# wedge alarm), so no flush path re-injects it until it changes or drains.
+cap_inject_content() {  # <state>
+  local h
+  h=$(_inject_content_hash "$1") || return 0
+  printf '%s' "$h" > "$1/.subsuper-inject-capped"
+}
+
+# Bounded wrapper around escalate_flush. <mode> is "normal" (the per-tick batch
+# flush) or "force" (the single max-defer escape retry, which ignores the
+# already-failed marker but still honors the hard cap). Returns 0 = delivered
+# (buffer and all markers cleared), 1 = attempted and unconfirmed (content
+# recorded as failed), 2 = HELD without attempting (already failed this content
+# on a normal tick, or already capped). Never re-injects capped content.
+escalate_flush_capped() {  # <state> <mode>
+  local state=$1 mode=${2:-normal} h capped failed
+  [ -s "$state/.subsuper-escalations" ] || { reset_inject_cap "$state"; return 0; }
+  h=$(_inject_content_hash "$state") || { reset_inject_cap "$state"; return 0; }
+  capped=$(cat "$state/.subsuper-inject-capped" 2>/dev/null || true)
+  if [ "$h" = "$capped" ]; then
+    return 2  # Wedge alarm already fired for this exact content; hold durably.
+  fi
+  if [ "$mode" != force ]; then
+    failed=$(cat "$state/.subsuper-inject-failed" 2>/dev/null || true)
+    if [ "$h" = "$failed" ]; then
+      return 2  # Already failed this content; the max-defer escape owns the retry.
+    fi
+  fi
+  if escalate_flush "$state"; then
+    reset_inject_cap "$state"
+    return 0
+  fi
+  printf '%s' "$h" > "$state/.subsuper-inject-failed"
+  return 1
+}
+
 # --- backend-independent active wedge alert ---------------------------------
 # The tmux status-line flash in inject_wedge_alarm below is a cosmetic,
 # client-side OSD with no cross-backend equivalent, so a wedged non-tmux primary
@@ -949,8 +1026,9 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  1) batch flush: if the escalation buffer's oldest content is older than
 #     ESCALATE_BATCH_SECS (or batching is disabled), inject one digest.
 #  1b) max-defer escape: if the buffer is STILL undelivered past MAX_DEFER_SECS,
-#     attempt one normal delivery; if it cannot confirm, raise the wedge alarm.
-#     Never silently defer forever.
+#     attempt one forced delivery; if it cannot confirm, raise the wedge alarm
+#     once and CAP this content so no later tick re-injects or re-alarms it (the
+#     buffer stays durable). Never silently defer forever, never loop forever.
 #  2) stale recheck: for each pending stale marker past STALE_ESCALATE_SECS,
 #     re-peek the pane; still idle -> escalate (wedge); resumed -> clear marker.
 #  2b) pause re-surface: for each declared-pause marker past PAUSE_RESURFACE_SECS,
@@ -959,17 +1037,19 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs
+  local state=$1 now due f key task win marker age last max_defer oldest pause_secs rc
   now=$(_now)
   migrate_watcher_pause_markers "$state"
 
-  # (1) batch flush
+  # (1) batch flush (bounded: content whose normal flush already failed is not
+  # re-injected each tick - escalate_flush_capped holds it for the max-defer
+  # escape below or a positively confirmed retry, never a per-tick re-inject).
   if [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ]; then
-    escalate_flush "$state" || true
+    escalate_flush_capped "$state" normal || true
   else
     due=$(_oldest_line_age "$state/.subsuper-escalations")
     if [ "$due" -ge "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" ]; then
-      escalate_flush "$state" || true
+      escalate_flush_capped "$state" normal || true
     fi
   fi
 
@@ -984,12 +1064,19 @@ housekeeping() {  # <state>
     # and waits.
     if [ "$oldest" -ge "$max_defer" ] \
        && [ "$(_file_age "$state/.subsuper-inject-wedged")" -ge "$max_defer" ]; then
-      if escalate_flush "$state"; then
-        log "inject recovered: max-defer flush succeeded after ${oldest}s undelivered"
-        rm -f "$state/.subsuper-inject-wedged"
-      else
-        inject_wedge_alarm "$state" "$oldest"
-      fi
+      # The single escape retry for this content. force ignores the per-tick
+      # failed marker but still honors the hard cap, so once the wedge alarm has
+      # fired for this exact content the flush returns 2 (held) and neither
+      # re-injects nor re-alarms - a confirmation false-negative costs at most
+      # this one alarm, not an all-night re-injection loop.
+      escalate_flush_capped "$state" force; rc=$?
+      case "$rc" in
+        0) log "inject recovered: max-defer flush succeeded after ${oldest}s undelivered"
+           rm -f "$state/.subsuper-inject-wedged" ;;
+        1) inject_wedge_alarm "$state" "$oldest"
+           cap_inject_content "$state" ;;
+        2) : ;;  # already capped for this content: hold durably, do not re-alarm
+      esac
     fi
   fi
 
@@ -1233,7 +1320,7 @@ handle_wake() {  # <reason> <state>
       # housekeeping re-escalates the same pane as a false wedge later.
       [ "$kind" = "stale" ] && stale_marker_remove "$arg" "$state"
       mark_escalated_seen "$kind" "$arg" "$state"
-      [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] && { escalate_flush "$state" || true; }
+      [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] && { escalate_flush_capped "$state" normal || true; }
       ;;
     pause)
       # Declared external-wait pause: record a pause marker (long re-surface
