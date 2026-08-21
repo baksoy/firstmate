@@ -131,17 +131,34 @@ sid=$(am "$H" source-id "$INBOX")
 out=$(am "$H" arm "$INBOX")
 assert_contains "$out" "armed: $sid" "arm registers the canonical source id"
 read -r PORT SERVER_PID < <(start_mock_server \
-  '{"type":"event","event_type":"message.received","message":{"from_":"Priya <priya@example.test>","subject":"Ship it"}}')
+  '{"type":"event","event_type":"message.received","message":{"from_":"Priya <priya@example.test>","subject":"Ship it","message_id":"msg_ship1","thread_id":"thr_ship1"}}')
 start_out=$(AGENTMAIL_API_KEY=am_test_key_received AGENTMAIL_WS_URL="ws://127.0.0.1:$PORT/v0" \
   FM_HOME="$H" "$ROOT/bin/fm-procevent.sh" start "$sid" 2>&1)
 assert_contains "$start_out" "autohandled: $sid" "a received event must be autohandled by the runner itself"
 [ "$(wake_payload_count "$H")" = 1 ] || fail "a real inbound message must wake exactly once"
-assert_grep 'new email from Priya <priya@example.test> - "Ship it"' "$H/state/.wake-queue" \
-  "the wake must carry the exact sender and subject"
+assert_grep 'new email from Priya <priya@example.test> - "Ship it" [message=msg_ship1 thread=thr_ship1]' \
+  "$H/state/.wake-queue" \
+  "the wake must carry the exact sender, subject, and reply-target token"
 assert_present "$H/state/procevent/$sid.source" \
   "a non-terminal inbox source must remain armed after a capture"
 kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true
-pass "a real inbound message wakes exactly once and leaves the inbox armed"
+pass "a real inbound message wakes exactly once and leaves the inbox armed with a reply-target token"
+
+# --- a message.received event with no usable message_id omits the token -----
+H="$TMP_ROOT/h-received-noid"; new_home "$H"
+INBOX="received-noid@example.test"
+sid=$(am "$H" source-id "$INBOX")
+am "$H" arm "$INBOX" >/dev/null
+read -r PORT SERVER_PID < <(start_mock_server \
+  '{"type":"event","event_type":"message.received","message":{"from_":"Priya <priya@example.test>","subject":"No ids"}}')
+AGENTMAIL_API_KEY=am_test_key_noid AGENTMAIL_WS_URL="ws://127.0.0.1:$PORT/v0" \
+  FM_HOME="$H" "$ROOT/bin/fm-procevent.sh" start "$sid" >/dev/null 2>&1
+assert_grep 'new email from Priya <priya@example.test> - "No ids"' "$H/state/.wake-queue" \
+  "a missing message_id must still produce a plain summary line"
+assert_no_grep '[message=' "$H/state/.wake-queue" \
+  "a missing message_id must never produce a reply-target token"
+kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true
+pass "an event with no usable message_id omits the reply-target token"
 
 # --- end to end: the inbox's own outbound reply never wakes ------------------
 H="$TMP_ROOT/h-sent"; new_home "$H"

@@ -4,14 +4,25 @@
 // to "message.received", until exactly one new inbound email arrives, then
 // prints one line to stdout and exits 0. Never polls.
 //
+// The printed line carries a trailing "[message=<message_id> thread=<thread_id>]"
+// token so a wake line alone is enough for bin/fm-agentmail-send.sh's `reply`
+// command: AgentMail's reply endpoint targets a message_id (verified against
+// https://docs.agentmail.to/api-reference/inboxes/messages/reply.md on
+// 2026-08-21), so message_id is the primary field; thread_id rides along for
+// context. Either id missing or containing characters outside
+// [A-Za-z0-9_.:-] drops the whole token rather than emitting a malformed or
+// unusable one - a bare summary line is still useful, a broken reply target
+// is not.
+//
 // Protocol verified against https://docs.agentmail.to/api-reference/websockets
 // on 2026-08-21: connect to <AGENTMAIL_WS_URL>?api_key=<key> (query-string
 // auth, no header/first-message handshake), send a JSON "subscribe" message
 // naming event_types and inbox_ids, then receive JSON "event" messages shaped
-// {type:"event", event_type:"message.received", message:{from_|from, subject,
-// ...}}. "message.sent" is a distinct event_type for the inbox's own outbound
-// mail, so subscribing to only "message.received" already excludes it - no
-// client-side sent/received filtering is needed on top of the subscription.
+// {type:"event", event_type:"message.received", message:{from, subject,
+// message_id, thread_id, ...}}. "message.sent" is a distinct event_type for
+// the inbox's own outbound mail, so subscribing to only "message.received"
+// already excludes it - no client-side sent/received filtering is needed on
+// top of the subscription.
 //
 // Env:
 //   AGENTMAIL_API_KEY        required; never printed, logged, or echoed.
@@ -37,6 +48,31 @@ if (!INBOX || !API_KEY) {
 function sanitizeField(value, fallback) {
   const text = value === undefined || value === null || value === '' ? fallback : String(value);
   return text.replace(/[\t\r\n]+/g, ' ').trim();
+}
+
+// safeId returns value unchanged only if it is a non-empty string made
+// entirely of [A-Za-z0-9_.:-] - the reply id token must never itself contain
+// the "]" or whitespace that would make the trailing token ambiguous to
+// parse. Returns '' (never a fabricated id) when value fails that check.
+function safeId(value) {
+  if (typeof value !== 'string' || value === '') {
+    return '';
+  }
+  return /^[A-Za-z0-9_.:-]+$/.test(value) ? value : '';
+}
+
+// replyToken builds the trailing "[message=<id> thread=<id>]" token that
+// carries the reply target through the wake line. message_id is the primary
+// field (AgentMail replies target a message_id, not a thread_id); the whole
+// token is omitted when message_id is unusable, since a reply can never be
+// built from thread_id alone.
+function replyToken(message) {
+  const messageId = safeId(message.message_id);
+  if (!messageId) {
+    return '';
+  }
+  const threadId = safeId(message.thread_id);
+  return threadId ? ` [message=${messageId} thread=${threadId}]` : ` [message=${messageId}]`;
 }
 
 function connect(backoffMs) {
@@ -69,7 +105,7 @@ function connect(backoffMs) {
     const message = payload.message || {};
     const from = sanitizeField(message.from_ ?? message.from, 'unknown sender');
     const subject = sanitizeField(message.subject, '(no subject)');
-    process.stdout.write(`new email from ${from} - "${subject}"\n`);
+    process.stdout.write(`new email from ${from} - "${subject}"${replyToken(message)}\n`);
     try {
       socket.close();
     } catch {
