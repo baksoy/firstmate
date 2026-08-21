@@ -41,6 +41,15 @@ The runner then passes each captured result to that source's own adapter `answer
 This is generic: any adapter with an `answers` command works, and the runner still wakes you to act on the result.
 `decision-hold-lifecycle` owns when a binding is required and what the keys must be.
 
+A new inbound email at an AgentMail inbox is armed to wake firstmate over AgentMail's push WebSocket, never by polling:
+
+```sh
+bin/fm-procevent-agentmail.sh arm [<inbox>]
+```
+
+It is self-announcing: the runner applies and durably acknowledges the captured result itself, so the wake that later surfaces already carries an applied `signal`, not a pending result to hand-apply.
+`<inbox>` defaults to `baksoy-firstmate@agentmail.to`; the adapter's own header owns exact key resolution, backoff, and the received-only subscription that already excludes the inbox's own outbound mail.
+
 A configured remote secondmate reply source is armed and handled through `bin/fm-procevent-remote-reply.sh`.
 Its header owns exact commands, while the adapter owns cursor continuity, validated deduplicated status ingest, path-confined document fetch, acknowledgement, and re-arming after a good delta.
 A continuity break is escalated once and stays unarmed until an operator deliberately rebases it.
@@ -56,7 +65,7 @@ Eligibility is a firstmate judgment made BEFORE arming, because the scripts cann
 Never bind an action that is destructive, irreversible, or security-sensitive, an action needing captain approval or any gate decision, or an action whose right form depends on what the condition finds - those keep the existing check-fires-then-firstmate-decides flow, for which a plain custom check or another adapter stays correct.
 When in doubt, arm only the condition half as an ordinary check and keep the action as a wake-time decision.
 
-`bin/fm-procevent.sh --help`, `bin/fm-procevent-lavish.sh --help`, `bin/fm-procevent-when.sh --help`, and `bin/fm-procevent-remote-reply.sh --help` own the exact commands and flags.
+`bin/fm-procevent.sh --help`, `bin/fm-procevent-lavish.sh --help`, `bin/fm-procevent-when.sh --help`, `bin/fm-procevent-remote-reply.sh --help`, and `bin/fm-procevent-agentmail.sh --help` own the exact commands and flags.
 
 Two rules the commands cannot enforce for you:
 
@@ -81,6 +90,7 @@ Two rules the commands cannot enforce for you:
   bin/fm-procevent.sh handled <source-id> <sequence>
   ```
   This call is atomically deduplicated by the exact source and sequence: it prints `handled: <id> <seq>` only the first time and `already-handled: <id> <seq>` on every repeat, so a paired effect gated on that distinction is never authorized twice. Reading the event line or the result file is not handling - only this call durably retires the wake, so call it every time, including on a repeat wake for a sequence you already acted on.
+: An `agentmail` wake carries a plain sender-and-subject line for one new inbound email; the adapter already applied and durably acknowledged it before the wake was published, so there is no adapter `handle` or `classify` command to run - just report the email and what, if anything, it changes.
 : Ask the adapter what the result means rather than parsing it yourself - for Lavish, `bin/fm-procevent-lavish.sh classify <result-file>` returns `feedback`, `ended`, `waiting`, `missing`, or `unknown`. A `feedback` result can still be the last one a review ever produces, so never assume another wake is coming just because the state is not `ended`.
 : A Lavish wake whose source id matches `bin/fm-procevent-lavish.sh source-id "$(bin/fm-bearings-board.sh path)"` is a bearings board result; load the `bearings` skill's board-wake handling regardless of which answer kinds the result contains.
 : A `when` wake carries the watch's one terminal captured outcome and may be re-announced until handled: `bin/fm-procevent-when.sh classify <result-file>` returns `fired` (relay the success and its output); `action-failed` (relay the captured error and decide recovery); `condition-error`, `never-true`, or `rejected` (the watch stopped safely without acting - report why and decide whether to re-arm); or `ambiguous` (the action was claimed but its outcome was never captured - verify its effect manually before anything else). Every `when` outcome is terminal and the action is never retried automatically, so after handling and the generic acknowledgement above, run `bin/fm-procevent-when.sh retire <name>` to clean the watch's private records before any re-arm.
