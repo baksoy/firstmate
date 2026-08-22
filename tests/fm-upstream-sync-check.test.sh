@@ -55,6 +55,12 @@ build_fixture() {
   checkout="$home/$name-checkout"
 
   git init -q --bare "$upstream_bare"
+  # Pin HEAD to refs/heads/main regardless of the host's init.defaultBranch
+  # config: a mismatched default (e.g. "master" on some CI runners) leaves
+  # this bare repo's HEAD dangling once only "main" is ever pushed, which
+  # then breaks the origin/checkout clones below ("remote HEAD refers to
+  # nonexistent ref").
+  git -C "$upstream_bare" symbolic-ref HEAD refs/heads/main
   upstream_abs=$(cd "$upstream_bare" && pwd)
 
   git init -q "$work"
