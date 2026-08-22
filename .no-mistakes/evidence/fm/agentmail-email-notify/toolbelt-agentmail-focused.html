@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+ body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;max-width:1080px;margin:24px auto;padding:0 24px;}
+ h1{font-size:1.5em;margin-bottom:2px;} .sub{color:#6e7781;font-size:.85em;margin-top:0;}
+ table{border-collapse:collapse;width:100%;margin-top:14px;font-size:.92em;}
+ th,td{border:1px solid #d0d7de;padding:9px 12px;text-align:left;vertical-align:top;}
+ th{background:#f6f8fa;} tr:nth-child(even):not(.new) td{background:#f6f8fa;}
+ code{background:rgba(175,184,193,.2);padding:.15em .4em;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:.9em;}
+ tr.new td{background:#dafbe1 !important;box-shadow:inset 4px 0 #2da44e;}
+ .badge{background:#2da44e;color:#fff;font-size:.68em;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:6px;}
+ .cap{margin-top:16px;font-size:.8em;color:#6e7781;} .ell{color:#8c959f;text-align:center;font-style:italic;}
+</style></head><body>
+<h1>The bin/ toolbelt — docs/scripts.md</h1>
+<p class="sub">Rendered slice around the two rows added by this change (target a3e79b5). Table has 116 rows total; showing rows 56–71 for context.</p>
+<table><thead><tr><th>Script</th><th>Purpose</th></tr></thead><tbody>
+<tr class="ell"><td colspan="2">… 55 earlier rows …</td></tr>
+<tr><td><code>fm-merge-local.sh</code></td><td>Fast-forward a <code>local-only</code> project&#x27;s local default branch after approval</td></tr>
+<tr><td><code>fm-review-diff.sh</code></td><td>Review a crewmate branch or resolved PR head against the authoritative base</td></tr>
+<tr><td><code>fm-marker-lib.sh</code></td><td>Compatibility entry point for the from-firstmate carrier owned by <code>fm-operational-input.sh</code></td></tr>
+<tr><td><code>fm-pending-reply-lib.sh</code></td><td>Parent-owned secondmate pending-reply expectations, recovery, and keyed escalation lifecycle</td></tr>
+<tr><td><code>fm-secondmate-report.sh</code></td><td>Optional helper to append a correlated parent status or document-pointer report</td></tr>
+<tr><td><code>fm-procevent-remote-reply.sh</code></td><td>Relay the remote-secondmate status stream through non-destructive process-event deltas</td></tr>
+<tr><td><code>fm-procevent-when.sh</code></td><td>Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome</td></tr>
+<tr class="new"><td><code>fm-procevent-agentmail.sh</code> <span class="badge">NEW</span></td><td>Wake firstmate over AgentMail&#x27;s push WebSocket on a new inbound email, self-announcing and never polling</td></tr>
+<tr class="new"><td><code>fm-agentmail-ws-listen.mjs</code> <span class="badge">NEW</span></td><td>Block on AgentMail&#x27;s push WebSocket until one new inbound email arrives, then print it and exit</td></tr>
+<tr><td><code>fm-gate-refuse-lib.sh</code></td><td>Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints</td></tr>
+<tr><td><code>fm-watch-arm.sh</code></td><td>Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger</td></tr>
+<tr><td><code>fm-watch-checkpoint.sh</code></td><td>Run one bounded foreground watcher checkpoint for Codex-style supervision</td></tr>
+<tr><td><code>fm-watch.sh</code></td><td>Singleton-safe always-on watcher: absorb benign wakes, queue and exit on actionable ones</td></tr>
+<tr><td><code>fm-inactive-reconcile.sh</code></td><td>Reconcile long-inactive direct crewmate terminal outcomes without forge access</td></tr>
+<tr><td><code>fm-afk-start.sh</code></td><td>Run the common sourceable away-mode daemon entry in the foreground</td></tr>
+<tr><td><code>fm-afk-launch.sh</code></td><td>Own away-mode entry, exit, rollback, and any backend terminal lifecycle</td></tr>
+<tr class="ell"><td colspan="2">… 45 later rows …</td></tr>
+</tbody></table>
+<p class="cap">Both new rows document the AgentMail inbound-email adapter and both scripts exist in bin/. Behavior re-validated by tests/fm-procevent-agentmail.test.sh (8/8 pass).</p>
+</body></html>

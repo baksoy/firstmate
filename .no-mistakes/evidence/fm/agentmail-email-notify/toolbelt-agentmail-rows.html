@@ -1,0 +1,138 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>docs/scripts.md — bin/ toolbelt (rendered)</title>
+<style>
+ body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;max-width:1080px;margin:32px auto;padding:0 24px;line-height:1.55;}
+ h1{font-size:1.9em;border-bottom:1px solid #d0d7de;padding-bottom:.3em;}
+ p{color:#57606a;font-size:.93em;}
+ table{border-collapse:collapse;width:100%;margin-top:20px;font-size:.9em;}
+ th,td{border:1px solid #d0d7de;padding:8px 12px;text-align:left;vertical-align:top;}
+ th{background:#f6f8fa;}
+ tr:nth-child(even):not(.new) td{background:#f6f8fa;}
+ code{background:rgba(175,184,193,.2);padding:.15em .4em;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:.92em;}
+ tr.new td{background:#dafbe1 !important;box-shadow:inset 3px 0 #2da44e;}
+ .badge{background:#2da44e;color:#fff;font-size:.7em;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:6px;}
+ .note{margin-top:24px;font-size:.82em;color:#6e7781;border-top:1px solid #d0d7de;padding-top:12px;}
+</style></head><body>
+<h1>The bin/ toolbelt <span style="font-size:.5em;color:#6e7781;">docs/scripts.md — rendered</span></h1>
+<p># The bin/ toolbelt</p><p>The first mate drives these; interactive entrypoints work by hand too, while <code>*-lib.sh</code> files are sourced helpers.</p><p>Each row is one purpose clause only: the script&#x27;s own header comment is the authoritative description of its behavior, flags, and contracts, so read the header before first use.</p><p>If you have changed away from the firstmate home in an interactive shell, invoke these scripts by absolute path through the repo&#x27;s <code>bin/</code> directory; the scripts self-locate internally after they start.</p><p>The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarized in architecture.md, while <code>docs/sessionstart-nudge.md</code> covers the silent session-open hook use; <code>fm-gate-refuse-lib.sh</code>&#x27;s header owns its exact contract.</p>
+<table><thead><tr><th>Script</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>fm-session-start.sh</code></td><td>Compose lock, bootstrap, and wake drain into the single ordered session-start digest</td></tr>
+<tr><td><code>fm-sessionstart-nudge.sh</code></td><td>Print the native session-start hook nudge when the primary has not already run the digest</td></tr>
+<tr><td><code>fm-sessionstart-run.sh</code></td><td>Route a native session-open hook to the full digest, a context re-emit, or the nudge</td></tr>
+<tr><td><code>fm-operational-input.sh</code></td><td>Construct and parse the canonical cross-language operational-input protocol</td></tr>
+<tr><td><code>fm-bootstrap.sh</code></td><td>Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools</td></tr>
+<tr><td><code>fm-startup-network.sh</code></td><td>Run session start&#x27;s network checks off its blocking path in a bounded detached worker, and publish the result inline or as a wake</td></tr>
+<tr><td><code>fm-fleet-sync.sh</code></td><td>Refresh project clones with safe fast-forwards, self-heals, <code>STUCK:</code> reports, branch pruning, and bounded recovery from an orphaned <code>.git/packed-refs.lock</code></td></tr>
+<tr><td><code>fm-fleet-snapshot.sh</code></td><td>Print the read-only structured fleet snapshot JSON (schema <code>fm-fleet-snapshot.v1</code>)</td></tr>
+<tr><td><code>fm-fleet-view.sh</code></td><td>Render the fleet snapshot as a human Markdown view</td></tr>
+<tr><td><code>fm-bearings-snapshot.sh</code></td><td>Project the fleet snapshot to the compact TOON bearings view; local-only unless <code>--include-prs</code></td></tr>
+<tr><td><code>fm-bearings-board.sh</code></td><td>Build and arm the stable interactive <code>/bearings lavish</code> fleet board</td></tr>
+<tr><td><code>fm-update.sh</code></td><td>Fast-forward-only self-update of firstmate and local or remote secondmate homes</td></tr>
+<tr><td><code>fm-on.sh</code></td><td>Execute one tracked Firstmate command in a configured remote secondmate home, using its job worker except for the doctor bootstrap</td></tr>
+<tr><td><code>fm-remote-job-lib.sh</code></td><td>Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH</td></tr>
+<tr><td><code>fm-remote-job-worker.sh</code></td><td>Long-lived remote queue worker for tracked <code>fm-*.sh</code> commands in the account runtime</td></tr>
+<tr><td><code>fm-remote-job-reap-orphans.sh</code></td><td>Stop remote job workers left running by a pruned code root, never one whose checkout still exists</td></tr>
+<tr><td><code>fm-remote-doctor.sh</code></td><td>Check, and with <code>--fix</code> repair, one remote account&#x27;s second-mate readiness (remote job worker, Herdr, Aqua launch agents, PATH, and required tools)</td></tr>
+<tr><td><code>fm-backlog-handoff.sh</code></td><td>Validate and delegate queued backlog-item moves into a secondmate home</td></tr>
+<tr><td><code>fm-backlog-receive.sh</code></td><td>Idempotently ingest one confined remote handoff outbox through tasks-axi</td></tr>
+<tr><td><code>fm-captain-hold.sh</code></td><td>Hold tasks for the captain, record the captain&#x27;s answers, gate investigation completion, and report record divergence between the status log and the backlog</td></tr>
+<tr><td><code>fm-decision-hold.sh</code></td><td>One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh</td></tr>
+<tr><td><code>fm-brief.sh</code></td><td>Scaffold ship (explicit <code>--mode</code>), scout, secondmate-charter, and Herdr-lab briefs</td></tr>
+<tr><td><code>fm-herdr-lab.sh</code></td><td>Provision and guardedly operate an isolated, never-default Herdr lab session</td></tr>
+<tr><td><code>fm-install-herdr.sh</code></td><td>Install CI&#x27;s exact-version Herdr pin with official asset URL, SHA-256, and protocol checks</td></tr>
+<tr><td><code>fm-install-treehouse.sh</code></td><td>Install CI&#x27;s exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees</td></tr>
+<tr><td><code>fm-herdr-ci-cleanup.sh</code></td><td>Snapshot and tear down only job-owned <code>fm-lab-*</code> sessions in the Herdr CI lane</td></tr>
+<tr><td><code>fm-test-run.sh</code></td><td>Behavior-test runner: selection, portable lanes, proven-isolated <code>--jobs</code>, coverage guard, timing/JSON</td></tr>
+<tr><td><code>fm-test-isolation-proof.sh</code></td><td>Concurrent isolation proof and proven-isolated candidate set owner</td></tr>
+<tr><td><code>fm-ensure-agents-md.sh</code></td><td>Ensure a project&#x27;s real <code>AGENTS.md</code>, its <code>CLAUDE.md</code> <code>@AGENTS.md</code> pointer, and the canonical self-governance section</td></tr>
+<tr><td><code>fm-guard.sh</code></td><td>Warn on primary-checkout tangles, pending queued wakes, and unhealthy supervision</td></tr>
+<tr><td><code>fm-primary-scope-lib.sh</code></td><td>Shared marker-or-plain-checkout primary-home predicate for tracked hooks</td></tr>
+<tr><td><code>fm-session-lock-lib.sh</code></td><td>Shared session-lock harness identity (ancestry walk and holder liveness) for fm-lock.sh and the Claude Stop auto-arm</td></tr>
+<tr><td><code>fm-claude-stop-autoarm.sh</code></td><td>Claude Stop <code>asyncRewake</code> hook owning tokenless watcher continuity with single-flight exit-2 rewake (docs/watcher-continuity.md)</td></tr>
+<tr><td><code>fm-turnend-guard.sh</code></td><td>Shared primary turn-end guard predicate so no turn ends blind (docs/turnend-guard.md)</td></tr>
+<tr><td><code>fm-turnend-guard-grok.sh</code></td><td>Grok Stop-hook adapter for the primary turn-end guard</td></tr>
+<tr><td><code>fm-kimi-turnend-hook.sh</code></td><td>Surgically install or remove Kimi&#x27;s guarded global crew turn-end hook</td></tr>
+<tr><td><code>fm-arm-pretool-check.sh</code></td><td>Stable PreToolUse transport for the watcher-arm command policy (docs/arm-pretool-check.md)</td></tr>
+<tr><td><code>fm-arm-command-policy.mjs</code></td><td>Semantic owner of the watcher-arm PreToolUse policy (docs/arm-pretool-check.md)</td></tr>
+<tr><td><code>fm-subagent-pretool-check.sh</code></td><td>Primary-home delegation-shape PreToolUse guard (docs/subagent-guard.md)</td></tr>
+<tr><td><code>fm-supervision-instructions.sh</code></td><td>Render the session-start primary-harness supervision block or the one-line repair instruction</td></tr>
+<tr><td><code>fm-home-seed.sh</code></td><td>Transactionally provision a local secondmate home and maintain <code>data/secondmates.md</code></td></tr>
+<tr><td><code>fm-remote-home-seed.sh</code></td><td>Register and provision a whole secondmate home on an SSH-reachable host</td></tr>
+<tr><td><code>fm-remote-readiness-lib.sh</code></td><td>Shared remote second-mate readiness gate: check and, when needed, repair then re-check through <code>fm-remote-doctor.sh</code></td></tr>
+<tr><td><code>fm-project-origin-lib.sh</code></td><td>Accepted origin-form owner shared by both remote provisioning boundaries</td></tr>
+<tr><td><code>fm-spawn.sh</code></td><td>Spawn crewmates, scouts, <code>id=repo</code> batches, and secondmates on the resolved harness and runtime backend</td></tr>
+<tr><td><code>fm-backend.sh</code></td><td>Runtime-backend selection, meta helpers, selector resolution, and operation dispatch</td></tr>
+<tr><td><code>fm-backend-hometag-lib.sh</code></td><td>Shared per-installation home-tag derivation for zellij tab and cmux workspace titles</td></tr>
+<tr><td><code>fm-composer-lib.sh</code></td><td>Single fleet-wide owner of composer shapes, capability-aware screen classification, and verdicts</td></tr>
+<tr><td><code>backends/tmux.sh</code></td><td>Verified tmux session-provider adapter</td></tr>
+<tr><td><code>backends/herdr.sh</code></td><td>Experimental herdr session-provider adapter</td></tr>
+<tr><td><code>backends/zellij.sh</code></td><td>Experimental zellij session-provider adapter</td></tr>
+<tr><td><code>backends/orca.sh</code></td><td>Experimental Orca backend adapter owning both worktree and terminal</td></tr>
+<tr><td><code>backends/cmux.sh</code></td><td>Experimental cmux session-provider adapter</td></tr>
+<tr><td><code>fm-config-push.sh</code></td><td>Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed</td></tr>
+<tr><td><code>fm-project-mode.sh</code></td><td>Resolve a project&#x27;s registered delivery posture from <code>data/projects.md</code> for fleet sync and home seeding</td></tr>
+<tr><td><code>fm-merge-local.sh</code></td><td>Fast-forward a <code>local-only</code> project&#x27;s local default branch after approval</td></tr>
+<tr><td><code>fm-review-diff.sh</code></td><td>Review a crewmate branch or resolved PR head against the authoritative base</td></tr>
+<tr><td><code>fm-marker-lib.sh</code></td><td>Compatibility entry point for the from-firstmate carrier owned by <code>fm-operational-input.sh</code></td></tr>
+<tr><td><code>fm-pending-reply-lib.sh</code></td><td>Parent-owned secondmate pending-reply expectations, recovery, and keyed escalation lifecycle</td></tr>
+<tr><td><code>fm-secondmate-report.sh</code></td><td>Optional helper to append a correlated parent status or document-pointer report</td></tr>
+<tr><td><code>fm-procevent-remote-reply.sh</code></td><td>Relay the remote-secondmate status stream through non-destructive process-event deltas</td></tr>
+<tr><td><code>fm-procevent-when.sh</code></td><td>Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome</td></tr>
+<tr class="new"><td><code>fm-procevent-agentmail.sh</code> <span class="badge">NEW</span></td><td>Wake firstmate over AgentMail&#x27;s push WebSocket on a new inbound email, self-announcing and never polling</td></tr>
+<tr class="new"><td><code>fm-agentmail-ws-listen.mjs</code> <span class="badge">NEW</span></td><td>Block on AgentMail&#x27;s push WebSocket until one new inbound email arrives, then print it and exit</td></tr>
+<tr><td><code>fm-gate-refuse-lib.sh</code></td><td>Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints</td></tr>
+<tr><td><code>fm-watch-arm.sh</code></td><td>Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger</td></tr>
+<tr><td><code>fm-watch-checkpoint.sh</code></td><td>Run one bounded foreground watcher checkpoint for Codex-style supervision</td></tr>
+<tr><td><code>fm-watch.sh</code></td><td>Singleton-safe always-on watcher: absorb benign wakes, queue and exit on actionable ones</td></tr>
+<tr><td><code>fm-inactive-reconcile.sh</code></td><td>Reconcile long-inactive direct crewmate terminal outcomes without forge access</td></tr>
+<tr><td><code>fm-afk-start.sh</code></td><td>Run the common sourceable away-mode daemon entry in the foreground</td></tr>
+<tr><td><code>fm-afk-launch.sh</code></td><td>Own away-mode entry, exit, rollback, and any backend terminal lifecycle</td></tr>
+<tr><td><code>fm-afk-return.sh</code></td><td>Own deterministic return shutdown, catch-up evidence, and the firstmate-actionable blocker gate</td></tr>
+<tr><td><code>fm-supervisor-target-lib.sh</code></td><td>Resolve the shared supervisor target and backend for the daemon and launcher</td></tr>
+<tr><td><code>fm-supervise-daemon.sh</code></td><td>Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery</td></tr>
+<tr><td><code>fm-crew-state.sh</code></td><td>Print one deterministic current-state line for a crew</td></tr>
+<tr><td><code>fm-nm-run-lib.sh</code></td><td>Shared branch-and-code-identity attribution for no-mistakes runs</td></tr>
+<tr><td><code>fm-tangle-lib.sh</code></td><td>Shared default-branch resolution and primary-checkout tangle classification</td></tr>
+<tr><td><code>fm-timeout-lib.sh</code></td><td>Single owner of hard-bounded command execution and its fallback watchdog</td></tr>
+<tr><td><code>fm-timing-lib.sh</code></td><td>Single owner of the deferred network stage&#x27;s per-step elapsed-time records, inert unless a run asks for them</td></tr>
+<tr><td><code>fm-supervision-lib.sh</code></td><td>Shared in-flight-work-without-fresh-watcher-beacon predicate</td></tr>
+<tr><td><code>fm-ff-lib.sh</code></td><td>Shared guarded fast-forward helper for origin pulls and local secondmate syncs</td></tr>
+<tr><td><code>fm-lock-lib.sh</code></td><td>Shared &quot;is this git lock provably abandoned?&quot; proof used by teardown and fleet-sync</td></tr>
+<tr><td><code>fm-config-inherit-lib.sh</code></td><td>Shared primary-to-secondmate inherited local-material propagation and config-reread delivery</td></tr>
+<tr><td><code>fm-tasks-axi-lib.sh</code></td><td>Shared backlog-backend selector and <code>tasks-axi</code> compatibility probe</td></tr>
+<tr><td><code>fm-quota-axi-lib.sh</code></td><td>Shared <code>quota-axi</code> compatibility floor for the bootstrap diagnostic</td></tr>
+<tr><td><code>fm-vendor-auth-probe.sh</code></td><td>Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact</td></tr>
+<tr><td><code>fm-wake-drain.sh</code></td><td>Present durable watcher wakes, unread informational status lines, OPEN DECISIONS, and captain-call RECORD DIVERGENCE, consume acknowledged rows through their sequence, retire only the matching recovery generation, then assert supervision health</td></tr>
+<tr><td><code>fm-wake-lib.sh</code></td><td>Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers</td></tr>
+<tr><td><code>fm-classify-lib.sh</code></td><td>Shared wake-classification vocabulary, durable keyed-decision folds and scans, and unread informational status-line selection</td></tr>
+<tr><td><code>fm-send.sh</code></td><td>Send one verified literal line or supported key through the target&#x27;s recorded backend</td></tr>
+<tr><td><code>fm-control.sh</code></td><td>Agent lifecycle control plane: allowlisted <code>interrupt</code>, <code>exit</code>, and transactional <code>relaunch</code> verbs for an exact task id (agent-control.md)</td></tr>
+<tr><td><code>fm-control-lib.sh</code></td><td>One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, and per-backend capability</td></tr>
+<tr><td><code>fm-busy-lib.sh</code></td><td>Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources</td></tr>
+<tr><td><code>fm-busy-event.sh</code></td><td>The only writer of a task&#x27;s semantic busy-state record; arms an incarnation and applies lifecycle events</td></tr>
+<tr><td><code>fm-tmux-lib.sh</code></td><td>Shared tmux pane primitives for composer capture, verified submit, and the submit-time busy check</td></tr>
+<tr><td><code>fm-peek.sh</code></td><td>Print a bounded tail of a crewmate endpoint</td></tr>
+<tr><td><code>fm-check-register.sh</code></td><td>Bind an intentional custom watcher check to its current bytes</td></tr>
+<tr><td><code>fm-check-lib.sh</code></td><td>Validate custom-check registrations and prepare private execution snapshots</td></tr>
+<tr><td><code>fm-pr-lib.sh</code></td><td>Own canonical task and PR validation plus private atomic PR-poll publication and identity-bound retirement</td></tr>
+<tr><td><code>fm-pr-poll.sh</code></td><td>Provide the byte-static watcher program for validated PR/MR-poll sidecars</td></tr>
+<tr><td><code>fm-pr-check-migrate.sh</code></td><td>Quarantine older task polls without execution and rebuild only canonical polls</td></tr>
+<tr><td><code>fm-pr-check.sh</code></td><td>Record validated <code>pr=</code> and <code>pr_head=</code> values, then atomically arm a static merge poll</td></tr>
+<tr><td><code>fm-pr-merge.sh</code></td><td>Record PR metadata, then merge a task&#x27;s canonical full GitHub URL</td></tr>
+<tr><td><code>fm-promote.sh</code></td><td>Promote a scout task in place to a protected ship task with an explicit delivery mode</td></tr>
+<tr><td><code>fm-teardown.sh</code></td><td>Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes</td></tr>
+<tr><td><code>fm-harness.sh</code></td><td>Detect the running harness and resolve crew or secondmate harness, model, and effort</td></tr>
+<tr><td><code>fm-lock.sh</code></td><td>Per-home firstmate session lock</td></tr>
+<tr><td><code>fm-x-lib.sh</code></td><td>Shared Relay config, relay, and reply-threading helpers</td></tr>
+<tr><td><code>fm-x-poll.sh</code></td><td>One bounded Relay poll: stash newly offered mentions and emit their once-only wake</td></tr>
+<tr><td><code>fm-x-reply.sh</code></td><td>Post or dry-run preview a composed Relay reply or follow-up</td></tr>
+<tr><td><code>fm-x-dismiss.sh</code></td><td>Dismiss a skipped Relay mention at the relay without replying</td></tr>
+<tr><td><code>fm-x-link.sh</code></td><td>Link a spawned task to its originating Relay mention in task meta</td></tr>
+<tr><td><code>fm-x-followup.sh</code></td><td>Detect, post, and cap completion follow-ups for a Relay-linked task</td></tr>
+<tr><td><code>fm-public-followup-lib.sh</code></td><td>Shared relay-activation gate, O(1) presence checks, and private transport paths for promised public replies</td></tr>
+<tr><td><code>fm-public-followup.sh</code></td><td>Reconcile typed terminal work results into a public commitment and deliver its final reply once</td></tr>
+<tr><td><code>fm-public-followup-emit.sh</code></td><td>Report one typed terminal work result into the home that owes the public reply</td></tr>
+</tbody></table>
+<p class="note">Rows highlighted green are the two added by this change (target commit a3e79b5), documenting the AgentMail inbound-email adapter (fm-procevent-agentmail.sh + fm-agentmail-ws-listen.mjs). Total rows: 116. Rendered directly from docs/scripts.md.</p>
+</body></html>
