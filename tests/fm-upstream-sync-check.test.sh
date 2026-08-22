@@ -233,7 +233,48 @@ test_dirty_checkout_skips_without_mutation() {
   pass "a dirty working tree is a preflight refusal, not a conflict, and makes no changes"
 }
 
+test_unrelated_histories_wakes_without_mutation() {
+  local home checkout status before origin_before wq wake_line orphan_work upstream_abs
+  home=$(new_home)
+  checkout=$(build_fixture "$home" epsilon)
+  before=$(head_sha "$checkout")
+  origin_before=$(origin_bare_head "$home/epsilon-origin.git")
+
+  # Force-push an orphan root commit to the bare upstream so upstream/main
+  # shares no history at all with the checkout's main, reproducing a fork
+  # recreation or upstream history rewrite.
+  orphan_work="$home/epsilon-orphan"
+  upstream_abs=$(cd "$home/epsilon-upstream.git" && pwd)
+  git init -q "$orphan_work"
+  git -C "$orphan_work" symbolic-ref HEAD refs/heads/main
+  commit_file "$orphan_work" unrelated.txt v0 "unrelated root"
+  git -C "$orphan_work" remote add upstream "file://$upstream_abs"
+  git -C "$orphan_work" push -q --force upstream main
+
+  set +e
+  run_check "$home" "$checkout"
+  status=$?
+  set -e
+
+  expect_code 1 "$status" "unrelated histories exits 1"
+  assert_contains "$CHECK_OUT" "wake:" "unrelated histories case reports a wake"
+  assert_contains "$CHECK_OUT" "merge-base" "unrelated histories case names the merge-base failure"
+
+  wq=$(wake_queue_file "$home")
+  assert_present "$wq" "unrelated histories case must queue a durable wake"
+  wake_line=$(cat "$wq")
+  assert_contains "$wake_line" $'\tsignal\t' "unrelated-histories wake must be kind=signal"
+  assert_contains "$wake_line" "upstream-sync-check" "unrelated-histories wake must use the generic check key"
+
+  [ "$(head_sha "$checkout")" = "$before" ] || fail "unrelated histories case moved local main"
+  [ -z "$(git -C "$checkout" status --porcelain)" ] || fail "unrelated histories case left a dirty tree"
+  [ "$(origin_bare_head "$home/epsilon-origin.git")" = "$origin_before" ] \
+    || fail "unrelated histories case pushed to the fixture origin"
+  pass "unrelated upstream/main history wakes without mutating the checkout"
+}
+
 test_no_new_upstream_commits_is_noop
 test_clean_divergence_merges_and_pushes
 test_genuine_conflict_makes_no_changes_and_wakes
 test_dirty_checkout_skips_without_mutation
+test_unrelated_histories_wakes_without_mutation

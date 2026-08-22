@@ -130,20 +130,32 @@ if ! git -C "$REPO" fetch --quiet "$UPSTREAM_REMOTE" "$BRANCH"; then
   wake_and_exit upstream-sync-check "could not fetch $UPSTREAM_REMOTE/$BRANCH"
 fi
 
-local_head=$(git -C "$REPO" rev-parse "$BRANCH") || exit 2
-origin_head=$(git -C "$REPO" rev-parse "$ORIGIN_REMOTE/$BRANCH") || exit 2
+if ! local_head=$(git -C "$REPO" rev-parse "$BRANCH"); then
+  wake_and_exit upstream-sync-check "could not resolve local $BRANCH after fetching $ORIGIN_REMOTE/$BRANCH"
+fi
+if ! origin_head=$(git -C "$REPO" rev-parse "$ORIGIN_REMOTE/$BRANCH"); then
+  wake_and_exit upstream-sync-check "could not resolve $ORIGIN_REMOTE/$BRANCH after fetching it"
+fi
 if [ "$local_head" != "$origin_head" ]; then
   wake_and_exit upstream-sync-check \
     "local $BRANCH ($local_head) does not match $ORIGIN_REMOTE/$BRANCH ($origin_head); skipped today's upstream sync"
 fi
 
-upstream_head=$(git -C "$REPO" rev-parse "$UPSTREAM_REMOTE/$BRANCH") || exit 2
-new_commit_count=$(git -C "$REPO" rev-list "$BRANCH..$UPSTREAM_REMOTE/$BRANCH" --count) || exit 2
+if ! upstream_head=$(git -C "$REPO" rev-parse "$UPSTREAM_REMOTE/$BRANCH"); then
+  wake_and_exit upstream-sync-check "could not resolve $UPSTREAM_REMOTE/$BRANCH after fetching it"
+fi
+if ! new_commit_count=$(git -C "$REPO" rev-list "$BRANCH..$UPSTREAM_REMOTE/$BRANCH" --count); then
+  wake_and_exit upstream-sync-check \
+    "could not count new commits between $BRANCH ($local_head) and $UPSTREAM_REMOTE/$BRANCH ($upstream_head)"
+fi
 if [ "$new_commit_count" -eq 0 ]; then
   exit 0
 fi
 
-merge_base=$(git -C "$REPO" merge-base "$BRANCH" "$UPSTREAM_REMOTE/$BRANCH") || exit 2
+if ! merge_base=$(git -C "$REPO" merge-base "$BRANCH" "$UPSTREAM_REMOTE/$BRANCH"); then
+  wake_and_exit upstream-sync-check \
+    "could not compute a merge-base between $BRANCH ($local_head) and $UPSTREAM_REMOTE/$BRANCH ($upstream_head); histories may be unrelated - skipped today's upstream sync"
+fi
 
 mt_output=$(git -C "$REPO" merge-tree --write-tree --merge-base="$merge_base" \
   --name-only --no-messages "$BRANCH" "$UPSTREAM_REMOTE/$BRANCH" 2>&1)
