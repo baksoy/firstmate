@@ -1,0 +1,10 @@
+=== BASE(pre-change): 8 runs of fm-pi-watch-extension.base.test.sh under 28 CPU hogs (cores=14) ===
+run 1: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 2: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 3: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 4: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 5: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 6: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 7: FAIL (exit=1, 22s) -> OpenCode watch plugin must arm only when this session owns the fleet lock: expected exit 0, got 1
+run 8: FAIL (exit=1, 22s) -> Pi session transitions must rearm through an explicit generation owner: expected exit 0, got 1
+=== BASE(pre-change) RESULT: 8/8 runs failed ===

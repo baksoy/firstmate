@@ -1,0 +1,12 @@
+=== FIXED(target): 10 runs of fm-pi-watch-extension.test.sh under 28 CPU hogs (cores=14) ===
+run 1: pass (exit=0, 42s)
+run 2: pass (exit=0, 43s)
+run 3: pass (exit=0, 45s)
+run 4: pass (exit=0, 42s)
+run 5: pass (exit=0, 43s)
+run 6: pass (exit=0, 41s)
+run 7: pass (exit=0, 43s)
+run 8: pass (exit=0, 45s)
+run 9: pass (exit=0, 44s)
+run 10: pass (exit=0, 44s)
+=== FIXED(target) RESULT: 0/10 runs failed ===
