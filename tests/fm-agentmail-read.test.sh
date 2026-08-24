@@ -87,6 +87,7 @@ log_field() {  # <log-file> <field-name>
 # The full inbound message body a real AgentMail get returns. The wake line only
 # ever carries sender + subject; `text` is content that lives ONLY in the body,
 # so a test that sees it back proves the helper fetched the body, not the wake.
+# shellcheck disable=SC2016 # single quotes are deliberate: literal JSON fixture; $9,000 must stay literal.
 FULL_BODY='{"message_id":"msg_abc123","thread_id":"thr_x","from":"vendor@example.test","subject":"Invoice #4021","preview":"Please wire...","text":"Body-only instruction: please wire $9,000 today."}'
 
 # --- get fetches the exact message endpoint and returns the FULL body --------
