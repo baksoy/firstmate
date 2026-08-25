@@ -955,3 +955,8 @@ Evidence produced 2026-08-23 on macOS 26.5.0 arm64, Node v24.14.1:
 
 Scope of this evidence: the installed signed `pi` CLI (0.84.1 at verification time) is a compiled binary whose bundled SDK is not importable from Node, so the importable npm package is the only surface the guard and the typecheck can pin.
 The extension executes inside the signed CLI's own runtime, so a CLI upgrade can drift ahead of the pinned npm surface; refresh this record after every Pi upgrade by re-running both commands above (point `FM_PI_PACKAGE_DIR` at a matching npm install when one exists) and by watching the branch's own fallback line - every branch failure degrades to the pre-branch wake-to-main path by construction, which `tests/fm-pi-branch-extension.test.sh` holds with a broken generator and the live guard holds with the real SDK.
+
+Refreshed 2026-08-25 on macOS arm64 while running as the Pi primary in this home, after switching this home's attended harness from Claude Code to Pi.
+The real-SDK guard printed `ok - real Pi SDK 0.84.3 accepts the branch session construction and preserves an unpromptable wake`, one minor version ahead of the 2026-08-23 record.
+The globally installed `pi` resolves to the Homebrew Cellar (`/opt/homebrew/Cellar/pi-coding-agent/0.84.2/libexec/lib/node_modules/@earendil-works/pi-coding-agent`) rather than the npm global root the guard defaults to, so the run set `FM_PI_PACKAGE_DIR` to that Cellar package dir; its bundled `@earendil-works/pi-tui` and `typebox` dependencies were present there, which the guard requires.
+Command of record: `FM_PI_PACKAGE_DIR=<cellar-pkg-dir> FM_PI_BRANCH_LIVE_E2E=1 bash tests/fm-pi-branch-live-e2e.test.sh`.
