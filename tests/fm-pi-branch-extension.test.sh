@@ -26,6 +26,7 @@ install_pi_branch_extension_fixture() {
     "$repo/node_modules/typebox"
   cp "$EXT" "$repo/.pi/extensions/fm-branch-supervision.ts"
   cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$repo/.pi/extensions/lib/fm-branch-dispatch.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$repo/.pi/extensions/lib/fm-calm-visibility.ts"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   mkdir -p "$repo/bin"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
@@ -40,6 +41,32 @@ export function getAgentDir() {
   return "/stub-agent-dir";
 }
 
+export function getMarkdownTheme() {
+  return {};
+}
+
+export class UserMessageComponent {}
+
+export class ModelRuntime {
+  constructor() {
+    this.models = (globalThis.__fmBranchStaticModels?.() ?? []).map((model) => ({ ...model }));
+    this.authenticated = new Set(this.models.filter((model) => model.storedAuth !== false).map((model) => model.provider));
+  }
+  static async create() {
+    const queuedError = globalThis.__fmModelRuntimeErrors?.shift();
+    if (queuedError) throw new Error(queuedError);
+    if (globalThis.__fmModelRuntimeError) throw new Error(globalThis.__fmModelRuntimeError);
+    const runtime = new ModelRuntime();
+    (globalThis.__fmModelRuntimes ??= []).push(runtime);
+    return runtime;
+  }
+  getModel(provider, id) {
+    return this.models.find((model) => model.provider === provider && model.id === id);
+  }
+  hasConfiguredAuth(provider) {
+    return this.authenticated.has(provider);
+  }
+}
 export class DefaultResourceLoader {
   constructor(options) {
     this.options = options;
@@ -87,6 +114,11 @@ export function createBashToolDefinition(cwd, options) {
 
 export async function createAgentSession(options) {
   if (globalThis.__fmCreateSessionError) throw new Error(globalThis.__fmCreateSessionError);
+  globalThis.__fmCreateStarted = (globalThis.__fmCreateStarted ?? 0) + 1;
+  if (globalThis.__fmCreateGate) await globalThis.__fmCreateGate;
+  if (options.model && (!options.modelRuntime || !options.modelRuntime.getModel(options.model.provider, options.model.id))) {
+    throw new Error(`branch runtime cannot use ${options.model.provider}/${options.model.id}`);
+  }
   const session = {
     options,
     ops: [],
@@ -124,6 +156,33 @@ export class Text {
     this.text = text;
     this.paddingX = paddingX;
     this.paddingY = paddingY;
+  }
+}
+
+export class Container {
+  constructor() {
+    this.children = [];
+  }
+  addChild(child) {
+    this.children.push(child);
+  }
+  clear() {
+    this.children = [];
+  }
+  render() {
+    return this.children.flatMap((child) => child.render?.() ?? []);
+  }
+}
+
+export class Box extends Container {
+  constructor(paddingX, paddingY, bgFn) {
+    super();
+    this.paddingX = paddingX;
+    this.paddingY = paddingY;
+    this.bgFn = bgFn;
+  }
+  setBgFn(bgFn) {
+    this.bgFn = bgFn;
   }
 }
 JS
@@ -180,6 +239,43 @@ if (!process.env.FM_TEST_SKIP_LOCK) {
   writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
 }
 
+// Stubbed model surface: Pi's own catalog and selector dialog, scripted.
+// registryModels is what ctx.modelRegistry serves, uiSelections queues the
+// captain's answers to ctx.ui.select, and notices records what the command
+// told the captain.
+const registryModels = [];
+const uiSelections = [];
+const uiPrompts = [];
+const notices = [];
+const commands = new Map();
+let mainModel = { provider: "anthropic", id: "main-model" };
+globalThis.__fmBranchStaticModels = () => registryModels
+  .filter((model) => model.branchAvailable !== false)
+  .map((model) => ({ ...model }));
+const modelRegistry = {
+  getAvailable: () => registryModels.filter((model) => model.mainAvailable !== false).slice(),
+  find: (provider, id) => registryModels.find((model) => model.provider === provider && model.id === id),
+  hasConfiguredAuth: (model) => model.mainAvailable !== false,
+};
+function makeCtx(extra) {
+  return {
+    modelRegistry,
+    get model() {
+      return mainModel;
+    },
+    ui: {
+      select(title, options) {
+        uiPrompts.push({ title, options });
+        return Promise.resolve(uiSelections.shift());
+      },
+      notify(message, type) {
+        notices.push({ message, type });
+      },
+    },
+    ...(extra ?? {}),
+  };
+}
+
 const busHandlers = new Map();
 const bus = {
   on(channel, handler) {
@@ -203,7 +299,9 @@ const pi = {
   registerTool(tool) {
     mainTools.push(tool);
   },
-  registerCommand() {},
+  registerCommand(name, options) {
+    commands.set(name, options);
+  },
   registerMessageRenderer(customType, renderer) {
     renderers.set(customType, renderer);
   },
@@ -271,7 +369,7 @@ test_branch_dispatch_two_stage_filter_and_prefix_contract() {
     DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
 const prelude = process.env.DRIVER_PRELUDE;
 await eval(`(async () => { ${prelude}; globalThis.__t = { pi, fire, dispatch, settle, outcomeScript, sentToMain, mainUserMessages, mainTools, renderers, home, realRoot }; })()`);
-const { fire, dispatch, settle, outcomeScript, sentToMain, mainUserMessages, mainTools, renderers, home, realRoot } = globalThis.__t;
+const { pi, fire, dispatch, settle, outcomeScript, sentToMain, mainUserMessages, mainTools, renderers, home, realRoot } = globalThis.__t;
 import { readFileSync, writeFileSync } from "node:fs";
 
 writeFileSync(`${home}/state/.lock`, `${process.ppid}\n`);
@@ -382,6 +480,47 @@ if (outcomeScript(["unread"]) !== "") throw new Error("merged outcomes were not 
 // renderer.
 const outcomesTool = mainTools.find((tool) => tool.name === "fm_branch_outcomes");
 if (!outcomesTool) throw new Error("fm_branch_outcomes was not registered on main");
+const renderTheme = {
+  fg(_color, text) { return text; },
+  bg(_color, text) { return text; },
+  bold(text) { return text; },
+};
+const renderContext = { state: {}, isError: false, isPartial: false };
+const stockResult = { content: [{ type: "text", text: "OUTCOME_DUMP" }] };
+const calmOffCall = outcomesTool.renderCall({}, renderTheme, renderContext);
+const calmOffResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
+if (calmOffCall.constructor.name !== "Box" || calmOffCall.paddingX !== 1 || calmOffCall.paddingY !== 1) {
+  throw new Error("fm_branch_outcomes changed its ordinary shell rendering");
+}
+if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.text !== "fm_branch_outcomes" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
+  throw new Error("fm_branch_outcomes changed its ordinary call or result rendering");
+}
+pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
+const calmOnCall = outcomesTool.renderCall({}, renderTheme, renderContext);
+const calmOnResult = outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
+if (calmOnCall.constructor.name !== "Container" || calmOnCall.render(100).length !== 0 || calmOnResult.constructor.name !== "Container" || calmOnResult.render(100).length !== 0) {
+  throw new Error("fm_branch_outcomes remained visible while Calm was on");
+}
+pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
+if (outcomesTool.renderCall({}, renderTheme, renderContext).constructor.name !== "Box" || outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext).constructor.name !== "Container") {
+  throw new Error("fm_branch_outcomes did not restore ordinary rendering when Calm was turned off");
+}
+pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
+let exportCallFellBack = false;
+let exportResultFellBack = false;
+try {
+  outcomesTool.renderCall({}, renderTheme, renderContext);
+} catch {
+  exportCallFellBack = true;
+}
+try {
+  outcomesTool.renderResult(stockResult, { expanded: false, isPartial: false }, renderTheme, renderContext);
+} catch {
+  exportResultFellBack = true;
+}
+if (!exportCallFellBack || !exportResultFellBack) {
+  throw new Error("fm_branch_outcomes replaced Pi stock export rendering");
+}
 const listed = await outcomesTool.execute("call-4", { recent: 2 }, undefined, undefined, {});
 const listedText = listed.content[0].text;
 if (listedText.split("\n").length !== 2 || !listedText.includes("checks green")) {
@@ -472,7 +611,7 @@ test_branch_default_on_heartbeat_afk_and_fallback() {
   home="$TMP_ROOT/gating-home"
   mkdir -p "$home/state" "$home/config" "$broken/bin"
   install_pi_branch_extension_fixture "$repo"
-  cp "$ROOT/bin/fm-lease.sh" "$ROOT/bin/fm-lease-lib.sh" "$ROOT/bin/fm-wake-lib.sh" "$broken/bin/"
+  cp "$ROOT/bin/fm-lease.sh" "$ROOT/bin/fm-lease-lib.sh" "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-wake-grant.sh" "$broken/bin/"
   cat > "$broken/bin/fm-branch-prompt.sh" <<'SH'
 #!/usr/bin/env bash
 echo "synthetic generator failure" >&2
@@ -649,6 +788,152 @@ EOF
   pass "pre-drain eligibility re-check defers a newly main-owned row"
 }
 
+# The non-heartbeat half of the same recheck: a check-kind row that arrives
+# after a signal/stale offer is accepted must stay main-owned WITHOUT bouncing
+# the branch's own eligible row back to main - the reproduction from the task
+# (docs/watcher-continuity.md "Per-actor acknowledgement"). Heartbeat keeps
+# its own, unchanged, all-or-nothing rule (proven above); this is the case
+# scopeForUnreadWake changed.
+test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligible_work() {
+  local repo home out status
+  repo="$TMP_ROOT/predrain-partial-root"
+  home="$TMP_ROOT/predrain-partial-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, home, mainUserMessages }; })()`);
+const { dispatch, fire, home, mainUserMessages } = globalThis.__t;
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+
+fire("session_start", {});
+let releasePrompt;
+globalThis.__fmPromptGate = new Promise((resolve) => { releasePrompt = resolve; });
+const offer = dispatch("signal: task-local wake");
+if (!offer.accepted) throw new Error("eligible task-local offer was not accepted");
+// A main-only notice arrives while main is still finishing its own earlier
+// turn - unacked, still sitting in the queue - between offer acceptance and
+// the branch's own drain.
+appendFileSync(`${home}/state/.wake-queue`, "2\t2\tcheck\tx-inbox\tcheck: pending x mention\n");
+for (let i = 0; i < 250 && !globalThis.__fmPromptStarted && mainUserMessages.length === 0; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (mainUserMessages.length !== 0) {
+  throw new Error(`a co-present main-owned row bounced the whole mixed queue to main: ${JSON.stringify(mainUserMessages)}`);
+}
+if (!globalThis.__fmPromptStarted) {
+  throw new Error("the branch was never prompted even though its own row stayed eligible");
+}
+const snapshot = readFileSync(`${home}/state/.branch-eligible-rows`, "utf8").trim().split("\n");
+if (!snapshot.includes("1")) throw new Error(`eligible-row snapshot omitted the task-local row: ${snapshot}`);
+if (snapshot.includes("2")) throw new Error(`eligible-row snapshot granted the main-owned row: ${snapshot}`);
+const queue = readFileSync(`${home}/state/.wake-queue`, "utf8");
+if (!queue.includes("\tcheck\tx-inbox\t")) {
+  throw new Error(`the main-owned row must remain queued for main, untouched: ${queue}`);
+}
+releasePrompt();
+for (let i = 0; i < 250 && (globalThis.__fmPrompts ?? []).length === 0; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+for (let i = 0; i < 250 && existsSync(`${home}/state/.branch-eligible-rows`); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("settled branch prompt retained its row grant");
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "pre-drain eligibility re-check must exclude only the new main-owned row: $out"
+  pass "pre-drain eligibility re-check excludes a newly main-owned row without deferring eligible work"
+}
+
+test_settled_branch_prompt_releases_unacknowledged_grant() {
+  local repo home out status
+  repo="$TMP_ROOT/settled-grant-root"
+  home="$TMP_ROOT/settled-grant-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, home, realRoot }; })()`);
+const { dispatch, fire, home, realRoot } = globalThis.__t;
+const { spawnSync } = await import("node:child_process");
+const { existsSync } = await import("node:fs");
+
+fire("session_start", {});
+if (!dispatch("signal: unacknowledged branch wake").accepted) {
+  throw new Error("eligible wake was not accepted");
+}
+for (let i = 0; i < 250 && (globalThis.__fmPrompts ?? []).length === 0; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if ((globalThis.__fmPrompts ?? []).length !== 1) throw new Error("branch prompt did not settle");
+for (let i = 0; i < 250 && existsSync(`${home}/state/.branch-eligible-rows`); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (existsSync(`${home}/state/.branch-eligible-rows`)) {
+  throw new Error("settled prompt left its unacknowledged grant active");
+}
+const drain = spawnSync("bash", [`${realRoot}/bin/fm-wake-drain.sh`], {
+  encoding: "utf8",
+  env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: `${home}/state`, FM_ROOT_OVERRIDE: realRoot },
+});
+if (drain.status !== 0) throw new Error(`main drain failed after grant release: ${drain.stderr}`);
+if (!drain.stdout.includes("\tsignal\tbranch-driver.status\t")) {
+  throw new Error(`main could not replay the unacknowledged branch row: ${drain.stdout}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "settled branch turns must release residual grants for main replay: $out"
+  pass "a settled branch turn releases an unacknowledged grant for main replay"
+}
+
+test_main_owned_grant_result_falls_back_to_main() {
+  local repo home out status
+  repo="$TMP_ROOT/main-owned-fallback-root"
+  home="$TMP_ROOT/main-owned-fallback-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, fire, home, mainUserMessages }; })()`);
+const { dispatch, fire, home, mainUserMessages } = globalThis.__t;
+import { writeFileSync } from "node:fs";
+
+fire("session_start", {});
+const offer = dispatch("signal: interrupted main claim");
+if (!offer.accepted) throw new Error("eligible wake was not accepted before the ownership recheck");
+writeFileSync(`${home}/state/.main-eligible-rows`, "1\n");
+for (let i = 0; i < 250 && mainUserMessages.length === 0; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if ((globalThis.__fmPrompts ?? []).length !== 0) {
+  throw new Error("branch prompted for a row already claimed by main");
+}
+if (mainUserMessages.length !== 1) {
+  throw new Error(`main-owned row was silently absorbed: ${JSON.stringify(mainUserMessages)}`);
+}
+if (!String(mainUserMessages[0].content).includes("FIRSTMATE WATCHER WAKE: signal: interrupted main claim")) {
+  throw new Error(`fallback lost the durable wake: ${mainUserMessages[0].content}`);
+}
+if (mainUserMessages[0].options.deliverAs !== "followUp") {
+  throw new Error("main-owned fallback was not delivered as a follow-up");
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "a main-owned grant result must still deliver the wake to main: $out"
+  pass "a stale main claim cannot silently suppress later wake delivery"
+}
+
 test_branch_predrain_recheck_noops_already_drained_wake() {
   local repo home out status
   repo="$TMP_ROOT/predrain-empty-root"
@@ -810,6 +1095,353 @@ EOF
   [ "$out" = "opened $first_file" ] \
     || fail "restart did not reopen the persistent branch session (got: $out; want: opened $first_file)"
   pass "branch session persists across process restarts through the recorded pointer"
+}
+
+test_branch_model_pin_applies_and_absent_pin_keeps_the_default() {
+  local repo home out status
+  repo="$TMP_ROOT/modelpin-root"
+  home="$TMP_ROOT/modelpin-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, registryModels, home }; })()`);
+const { fire, dispatch, settle, makeCtx, registryModels, home } = globalThis.__t;
+import { rmSync, writeFileSync } from "node:fs";
+
+registryModels.push({ provider: "anthropic", id: "main-model" }, { provider: "openai", id: "cheap-1" });
+
+// 1. No pin and main's model not known yet: the build falls back to the
+// pre-feature path of passing no override rather than refusing to build, so
+// a wake is never lost over model choice.
+fire("session_start", {});
+dispatch("signal: main model unknown");
+await settle(() => (globalThis.__fmSessions ?? []).length === 1, "unknown-main-model branch build");
+if ("model" in globalThis.__fmSessions[0].options) {
+  throw new Error("an unknown main model must fall back to passing no model override");
+}
+
+// 2. No pin, main's model known: the branch follows MAIN's own model,
+// applied explicitly.
+fire("session_shutdown", {});
+fire("session_start", {}, makeCtx());
+dispatch("signal: unpinned probe");
+await settle(() => (globalThis.__fmSessions ?? []).length === 2, "unpinned branch build");
+const unpinned = globalThis.__fmSessions[1].options.model;
+if (!unpinned || unpinned.provider !== "anthropic" || unpinned.id !== "main-model") {
+  throw new Error(`an absent pin must follow main's own model: ${JSON.stringify(unpinned)}`);
+}
+
+// 3. Pin present: the very next build carries exactly that model, resolved
+// out of Pi's own catalog.
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/cheap-1\n");
+fire("session_shutdown", {});
+fire("session_start", {}, makeCtx());
+dispatch("signal: pinned probe");
+await settle(() => (globalThis.__fmSessions ?? []).length === 3, "pinned branch build");
+const pinned = globalThis.__fmSessions[2].options.model;
+if (!pinned || pinned.provider !== "openai" || pinned.id !== "cheap-1") {
+  throw new Error(`pinned build did not use the pinned model: ${JSON.stringify(pinned)}`);
+}
+
+// 4. The reopen path (/new, /resume, /fork, reload all replace the session
+// in-process) reopens the SAME persistent branch conversation and still
+// applies the pin.
+fire("session_shutdown", {});
+fire("session_start", {}, makeCtx());
+dispatch("signal: reopened probe");
+await settle(() => (globalThis.__fmSessions ?? []).length === 4, "reopened branch build");
+const reopened = globalThis.__fmSessions[3].options.model;
+if (!reopened || reopened.provider !== "openai" || reopened.id !== "cheap-1") {
+  throw new Error(`reopened build did not use the pinned model: ${JSON.stringify(reopened)}`);
+}
+const manager = globalThis.__fmSessions[3].options.sessionManager;
+if (!manager.opened) throw new Error("reopen did not continue the persistent branch conversation");
+
+// 5. Clearing the pin makes the REOPENED branch follow main again. This is
+// the case Pi's own session restore would otherwise get wrong: the branch
+// conversation still records the pinned model, so only an explicit override
+// keeps "follow main" honest.
+rmSync(`${home}/config/supervision-branch-model`);
+fire("session_shutdown", {});
+fire("session_start", {}, makeCtx());
+dispatch("signal: unpinned again");
+await settle(() => (globalThis.__fmSessions ?? []).length === 5, "post-clear branch build");
+const cleared = globalThis.__fmSessions[4];
+if (!cleared.options.sessionManager.opened) {
+  throw new Error("the post-clear build must still reopen the persistent branch conversation");
+}
+if (cleared.options.model?.id === "cheap-1") {
+  throw new Error("clearing the pin left the branch on the previously pinned model");
+}
+if (cleared.options.model?.provider !== "anthropic" || cleared.options.model?.id !== "main-model") {
+  throw new Error(`clearing the pin did not return the branch to main's model: ${JSON.stringify(cleared.options.model)}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "the current pin state must decide the model on every branch build: $out"
+  pass "the current pin state binds every branch create and reopen, and clearing it returns the branch to main's model"
+}
+
+test_unpinned_branch_follows_main_model_changes_live() {
+  local repo home out status
+  repo="$TMP_ROOT/model-live-root"
+  home="$TMP_ROOT/model-live-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, registryModels, home }; })()`);
+const { fire, dispatch, settle, makeCtx, registryModels, home } = globalThis.__t;
+import { readFileSync, writeFileSync } from "node:fs";
+
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  { provider: "anthropic", id: "replacement-model" },
+  { provider: "openai", id: "cheap-1" },
+);
+fire("session_start", {}, makeCtx());
+dispatch("signal: before main model change");
+await settle(() => (globalThis.__fmSessions ?? []).length === 1, "initial unpinned branch build");
+const original = globalThis.__fmSessions[0];
+if (original.options.model?.id !== "main-model") throw new Error("the unpinned branch did not start on main's model");
+
+fire("model_select", { model: { provider: "anthropic", id: "replacement-model" } });
+await settle(() => original.disposed, "live unpinned branch release");
+dispatch("signal: after main model change");
+await settle(() => (globalThis.__fmSessions ?? []).length === 2, "replacement unpinned branch build");
+const following = globalThis.__fmSessions[1];
+if (following.options.model?.id !== "replacement-model") {
+  throw new Error(`the unpinned branch did not follow main's model change: ${JSON.stringify(following.options.model)}`);
+}
+
+writeFileSync(`${home}/config/supervision-branch-model`, "openai/cheap-1\n");
+fire("session_shutdown", {});
+fire("session_start", {}, makeCtx());
+dispatch("signal: establish pinned branch");
+await settle(() => (globalThis.__fmSessions ?? []).length === 3, "pinned branch build");
+const pinned = globalThis.__fmSessions[2];
+if (pinned.options.model?.id !== "cheap-1") throw new Error("the pinned branch did not use its pin");
+const promptsBefore = pinned.ops.filter((op) => op.kind === "prompt").length;
+
+fire("model_select", { model: { provider: "anthropic", id: "replacement-model" } });
+dispatch("signal: pinned after main model change");
+await settle(() => pinned.ops.filter((op) => op.kind === "prompt").length === promptsBefore + 1, "pinned branch wake");
+if (pinned.disposed || globalThis.__fmSessions.length !== 3) {
+  throw new Error("a main model change replaced the pinned branch");
+}
+if (readFileSync(`${home}/config/supervision-branch-model`, "utf8") !== "openai/cheap-1\n") {
+  throw new Error("a main model change disturbed the supervision pin");
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "unpinned branches must follow main model changes while pins remain authoritative: $out"
+  pass "unpinned branches follow main model changes live while pinned branches stay fixed"
+}
+
+test_supervision_model_command_persists_and_rebinds_the_live_branch() {
+  local repo home out status
+  repo="$TMP_ROOT/modelcmd-root"
+  home="$TMP_ROOT/modelcmd-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, commands, registryModels, uiSelections, uiPrompts, notices, home }; })()`);
+const { fire, dispatch, settle, makeCtx, commands, registryModels, uiSelections, uiPrompts, notices, home } = globalThis.__t;
+import { existsSync, readFileSync, statSync } from "node:fs";
+
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  { provider: "openai-codex", id: "cheap-oauth", authKind: "oauth" },
+  { provider: "dynamic", id: "extension-only", branchAvailable: false },
+);
+const command = commands.get("supervision-model");
+if (!command) throw new Error("the supervision-model command was not registered");
+
+fire("session_start", {}, makeCtx());
+dispatch("signal: before the pick");
+await settle(() => (globalThis.__fmSessions ?? []).length === 1, "pre-pick branch build");
+const firstSession = globalThis.__fmSessions[0];
+if (firstSession.options.model?.id !== "main-model") {
+  throw new Error(`the branch started on something other than main's model before any pick: ${JSON.stringify(firstSession.options.model)}`);
+}
+
+// The picker offers Pi's branch-runnable catalog plus following main, and the
+// captain's pick is persisted as the one-line config value.
+uiSelections.push("openai-codex/cheap-oauth");
+await command.handler("", makeCtx());
+const offered = uiPrompts[0];
+if (offered.options[0] !== "Follow main (anthropic/main-model)") {
+  throw new Error(`the picker must offer following main first: ${JSON.stringify(offered.options)}`);
+}
+if (!offered.options.includes("openai-codex/cheap-oauth") || !offered.options.includes("anthropic/main-model")) {
+  throw new Error(`the picker omitted a model available to the isolated branch: ${JSON.stringify(offered.options)}`);
+}
+if (offered.options.includes("dynamic/extension-only")) {
+  throw new Error(`the picker offered a main-session-only provider: ${JSON.stringify(offered.options)}`);
+}
+const pinFile = `${home}/config/supervision-branch-model`;
+if (readFileSync(pinFile, "utf8") !== "openai-codex/cheap-oauth\n") {
+  throw new Error(`unexpected persisted pin: ${JSON.stringify(readFileSync(pinFile, "utf8"))}`);
+}
+if ((statSync(pinFile).mode & 0o777) !== 0o600) throw new Error("the pin must be written private to the operator");
+if (!notices.some((notice) => notice.message.includes("openai-codex/cheap-oauth"))) {
+  throw new Error(`the captain was not told which model the branch now uses: ${JSON.stringify(notices)}`);
+}
+
+// The live branch is released, so the pick binds on the next wake instead of
+// waiting for a session replacement - and the same persistent conversation
+// comes back under the new model.
+await settle(() => firstSession.disposed, "live branch release after the pick");
+dispatch("signal: after the pick");
+await settle(() => (globalThis.__fmSessions ?? []).length === 2, "post-pick branch build");
+const repinned = globalThis.__fmSessions[1];
+if (!repinned.options.model || repinned.options.model.id !== "cheap-oauth") {
+  throw new Error(`the pick did not bind the next branch build: ${JSON.stringify(repinned.options.model)}`);
+}
+if (repinned.options.model.authKind !== "oauth") {
+  throw new Error(`the branch runtime changed the stored OAuth credential semantics: ${JSON.stringify(repinned.options.model)}`);
+}
+if (!repinned.options.sessionManager.opened) throw new Error("the pick must keep the branch conversation, not start a new one");
+
+// Following main again clears the file and actually returns the branch to
+// main's model, rather than letting the reopened session restore the pin.
+const clearNoticeCount = notices.length;
+uiSelections.push("Follow main (anthropic/main-model)");
+await command.handler("", makeCtx());
+if (existsSync(pinFile)) throw new Error("following main must remove the pin file");
+const clearNotices = notices.slice(clearNoticeCount);
+if (clearNotices.length !== 1 || clearNotices[0].type !== "info" || !clearNotices[0].message.includes("anthropic/main-model")) {
+  throw new Error(`following main did not report the model actually applied: ${JSON.stringify(clearNotices)}`);
+}
+await settle(() => repinned.disposed, "live branch release after clearing");
+dispatch("signal: after clearing");
+await settle(() => (globalThis.__fmSessions ?? []).length === 3, "post-clear branch build");
+const followed = globalThis.__fmSessions[2].options.model;
+if (followed?.id === "cheap-oauth") throw new Error("following main left the branch on the cleared pin's model");
+if (followed?.provider !== "anthropic" || followed?.id !== "main-model") {
+  throw new Error(`following main did not apply main's own model: ${JSON.stringify(followed)}`);
+}
+
+// A pick made while the old-model branch build is in flight invalidates that
+// build. The accepted wake continues on a second build under the newest pin.
+uiSelections.push("Follow main (anthropic/main-model)");
+await command.handler("", makeCtx());
+let releaseCreate;
+globalThis.__fmCreateGate = new Promise((resolve) => { releaseCreate = resolve; });
+const createsBeforeRace = globalThis.__fmCreateStarted;
+dispatch("signal: model race");
+await settle(() => globalThis.__fmCreateStarted === createsBeforeRace + 1, "in-flight old-model build");
+uiSelections.push("openai-codex/cheap-oauth");
+await command.handler("", makeCtx());
+releaseCreate();
+await settle(() => (globalThis.__fmSessions ?? []).length === 5, "replacement build after in-flight pick");
+const staleBuild = globalThis.__fmSessions[3];
+const winningBuild = globalThis.__fmSessions[4];
+if (!staleBuild.disposed || staleBuild.options.model?.id === "cheap-oauth") {
+  throw new Error("the in-flight old-model build was adopted after the pick");
+}
+if (winningBuild.options.model?.id !== "cheap-oauth") {
+  throw new Error(`the newest pin did not win the in-flight build race: ${JSON.stringify(winningBuild.options.model)}`);
+}
+await settle(() => (globalThis.__fmPrompts ?? []).some((prompt) => prompt.includes("signal: model race")), "raced wake prompt");
+
+// A cancelled picker changes nothing.
+uiSelections.push(undefined);
+await command.handler("", makeCtx());
+if (readFileSync(pinFile, "utf8") !== "openai-codex/cheap-oauth\n") throw new Error("a cancelled picker must not change the pin");
+
+// If the isolated runtime cannot load, the old pin remains and no success
+// notification is emitted.
+const noticeCount = notices.length;
+globalThis.__fmModelRuntimeError = "synthetic stored-credential load failure";
+await command.handler("", makeCtx());
+delete globalThis.__fmModelRuntimeError;
+if (readFileSync(pinFile, "utf8") !== "openai-codex/cheap-oauth\n") throw new Error("an unapplied model replaced the working pin");
+const newNotices = notices.slice(noticeCount);
+if (newNotices.length !== 1 || newNotices[0].type !== "error") {
+  throw new Error(`an unapplied model emitted a success notification: ${JSON.stringify(newNotices)}`);
+}
+
+// If the picker loads but resolving main after Follow main fails, the pin is
+// cleared and the captain receives an honest warning rather than a rejection
+// or a false success notice.
+const clearFailureNoticeCount = notices.length;
+globalThis.__fmModelRuntimeErrors = [null, "synthetic post-clear runtime failure"];
+uiSelections.push("Follow main (anthropic/main-model)");
+await command.handler("", makeCtx());
+if (existsSync(pinFile)) throw new Error("following main did not clear the pin before its resolution warning");
+const clearFailureNotices = notices.slice(clearFailureNoticeCount);
+if (
+  clearFailureNotices.length !== 1 ||
+  clearFailureNotices[0].type !== "warning" ||
+  !clearFailureNotices[0].message.includes("synthetic post-clear runtime failure")
+) {
+  throw new Error(`post-clear resolution failure was not reported honestly: ${JSON.stringify(clearFailureNotices)}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "the supervision-model command must persist the pick and rebind the live branch: $out"
+  pass "supervision-model command persists the captain's pick and rebinds the live branch"
+}
+
+test_unusable_model_pin_falls_back_to_main() {
+  local repo home out status
+  repo="$TMP_ROOT/modelbad-root"
+  home="$TMP_ROOT/modelbad-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, registryModels, mainUserMessages, home }; })()`);
+const { fire, dispatch, settle, makeCtx, registryModels, mainUserMessages, home } = globalThis.__t;
+import { writeFileSync } from "node:fs";
+
+registryModels.push(
+  { provider: "anthropic", id: "main-model" },
+  { provider: "dynamic", id: "extension-only", branchAvailable: false },
+);
+
+// A pin the isolated branch runtime cannot hand back is never a silent
+// downgrade onto main's model, even when main's session knows that model.
+writeFileSync(`${home}/config/supervision-branch-model`, "dynamic/extension-only\n");
+fire("session_start", {}, makeCtx());
+dispatch("signal: unusable pin probe");
+await settle(() => mainUserMessages.length === 1, "fallback to main");
+const delivered = mainUserMessages[0].content;
+if (!delivered.includes("dynamic/extension-only") || !delivered.includes("supervision model pin")) {
+  throw new Error(`the fallback did not name the unusable pin: ${delivered}`);
+}
+if ((globalThis.__fmSessions ?? []).length !== 0) throw new Error("an unusable pin must not build a branch session");
+
+// An unparseable file is simply no pin, so supervision keeps working and the
+// branch follows main's own model.
+writeFileSync(`${home}/config/supervision-branch-model`, "not-a-model-reference\n");
+fire("session_shutdown", {});
+fire("session_start", {}, makeCtx());
+dispatch("signal: unparseable pin probe");
+await settle(() => (globalThis.__fmSessions ?? []).length === 1, "unparseable-pin branch build");
+const unparseable = globalThis.__fmSessions[0].options.model;
+if (unparseable?.provider !== "anthropic" || unparseable?.id !== "main-model") {
+  throw new Error(`an unparseable pin must be treated as no pin and follow main: ${JSON.stringify(unparseable)}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "an unusable model pin must fall back to main and an unparseable one must be no pin: $out"
+  pass "an unusable model pin falls back to main and an unparseable one is treated as no pin"
 }
 
 test_replacement_activation_cleans_leases_and_retries_failure() {
@@ -1123,13 +1755,233 @@ EOF
   pass "an extension rebind re-mirrors undelivered dialog instead of dropping it"
 }
 
+# Direct unit coverage of fm-branch-dispatch.ts's classification, independent
+# of the Pi SDK stub: every legitimately main-only class (docs/pi-supervision-
+# branch.md) stays excluded from eligibleSeqs no matter its check-kind key,
+# a mixed queue keeps its task-local rows eligible without those main-only
+# rows vetoing the scan, and the eligible-row snapshot writer names exactly
+# the eligible set.
+test_branch_dispatch_classifies_main_only_rows_and_writes_the_eligible_snapshot() {
+  local repo home out status
+  repo="$TMP_ROOT/dispatch-classify-root"
+  home="$TMP_ROOT/dispatch-classify-home"
+  mkdir -p "$repo/.pi/extensions/lib" "$home/state" "$home/projects/approved"
+  cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$repo/.pi/extensions/lib/fm-branch-dispatch.ts"
+  printf 'project=%s/projects/approved\nwindow=fm-window\n' "$home" > "$home/state/task-a.meta"
+  LIB="$repo/.pi/extensions/lib/fm-branch-dispatch.ts" FM_HOME="$home" GRANT="$ROOT/bin/fm-wake-grant.sh" \
+    node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { readFileSync, writeFileSync } from "node:fs";
+
+const { activateEligibleRowsOwner, scopeForUnreadWake, writeEligibleRowsSnapshot, releaseEligibleRowsSnapshot, BRANCH_ELIGIBLE_ROWS_FILE } =
+  await import(pathToFileURL(process.env.LIB).href);
+const state = `${process.env.FM_HOME}/state`;
+const project = `${process.env.FM_HOME}/projects/approved`;
+
+// Every legitimately main-only class is a check-kind row under a different
+// key; classification never looks at the key, only the kind, so one
+// representative per named class is sufficient coverage.
+const mainOnlyRows = [
+  "1\t1\tcheck\tx-inbox\tcheck: pending x mention",
+  "1\t1\tcheck\tsome-poll.check.sh\tcheck: some-poll.check.sh: merged",
+  "1\t1\tcheck\tunauthenticated-state-checks\tcheck: rejected unauthenticated state checks",
+];
+for (const row of mainOnlyRows) {
+  writeFileSync(`${state}/.wake-queue`, row);
+  const scope = scopeForUnreadWake(state, false);
+  if (scope.eligible || scope.eligibleSeqs.length !== 0) {
+    throw new Error(`a main-only class was offered to the branch: ${row} -> ${JSON.stringify(scope)}`);
+  }
+  if (scope.corrupted) throw new Error(`an ordinary main-only row must not read as corrupted: ${row}`);
+}
+
+writeFileSync(
+  `${state}/.wake-queue`,
+  [
+    "1\t1\tcheck\tx-inbox",
+    "1\t2\tsignal\ttask-a.status\tsignal: task-a.status",
+  ].join("\n"),
+);
+const truncated = scopeForUnreadWake(state, false);
+if (!truncated.corrupted || truncated.eligible || truncated.eligibleSeqs.length !== 0) {
+  throw new Error(`a four-field queue row was not classified as corruption: ${JSON.stringify(truncated)}`);
+}
+
+// A mixed queue: the main-only row (seq 1) never vetoes the task-local rows
+// (seq 2, 3) - the reproduction from the task.
+writeFileSync(
+  `${state}/.wake-queue`,
+  [
+    "1\t1\tcheck\tx-inbox\tcheck: pending x mention",
+    "1\t2\tsignal\ttask-a.status\tsignal: task-a.status",
+    "1\t3\tstale\tfm-window\tstale: fm-window",
+  ].join("\n"),
+);
+const mixed = scopeForUnreadWake(state, false);
+if (!mixed.eligible) throw new Error(`mixed queue with eligible task-local rows must stay eligible: ${JSON.stringify(mixed)}`);
+if (mixed.eligibleSeqs.slice().sort().join(",") !== "2,3") {
+  throw new Error(`eligibleSeqs must name exactly the task-local rows: ${JSON.stringify(mixed)}`);
+}
+if (!mixed.projects.includes(project)) {
+  throw new Error(`eligible project context lost: ${JSON.stringify(mixed.projects)}`);
+}
+
+if (!activateEligibleRowsOwner(state, process.env.GRANT, process.pid, "fixture")) {
+  throw new Error("branch owner activation failed");
+}
+if (writeEligibleRowsSnapshot(state, mixed.eligibleSeqs, process.env.GRANT, "fixture") !== "published") {
+  throw new Error("snapshot write reported failure");
+}
+const snapshot = readFileSync(`${state}/${BRANCH_ELIGIBLE_ROWS_FILE}`, "utf8").trim().split("\n");
+if (snapshot.join(",") !== "2,3") throw new Error(`snapshot did not name exactly the eligible rows: ${snapshot}`);
+
+// An empty eligible set is refused rather than clearing the snapshot to
+// nothing - a caller must never overwrite a live snapshot with an empty one.
+if (writeEligibleRowsSnapshot(state, [], process.env.GRANT, "fixture") !== "error") {
+  throw new Error("an empty eligible set must not be written");
+}
+if (!releaseEligibleRowsSnapshot(state, process.env.GRANT, "fixture")) throw new Error("snapshot release failed");
+writeFileSync(`${state}/.main-eligible-rows`, "2\n");
+if (writeEligibleRowsSnapshot(state, ["2"], process.env.GRANT, "fixture") !== "main-owned") {
+  throw new Error("a row already claimed by main was not reported as main-owned");
+}
+
+// heartbeat keeps its own unchanged all-or-nothing rule: the same main-only
+// row that is merely excluded for a non-heartbeat scan still vetoes a
+// heartbeat review outright.
+const heartbeatMixed = scopeForUnreadWake(state, true);
+if (heartbeatMixed.eligible || !heartbeatMixed.corrupted) {
+  throw new Error(`a main-only row must still veto a heartbeat review: ${JSON.stringify(heartbeatMixed)}`);
+}
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "main-only classification and eligible-row snapshot contract must hold: $out"
+  pass "scopeForUnreadWake excludes every main-only class without vetoing eligible task-local rows, and writes the eligible snapshot"
+}
+
+test_outcomes_tool_uses_stock_execution_and_export_consumers() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "skip: node not found for Pi outcomes rendering test"
+    return
+  fi
+  local package_dir fixture out status
+  package_dir=${FM_PI_PACKAGE_DIR:-"$(npm root -g 2>/dev/null)/@earendil-works/pi-coding-agent"}
+  if [ ! -f "$package_dir/package.json" ]; then
+    echo "skip: installed @earendil-works/pi-coding-agent package not found"
+    return
+  fi
+  fixture="$TMP_ROOT/stock-render-consumers"
+  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/node_modules/@earendil-works"
+  cp "$EXT" "$fixture/.pi/extensions/fm-branch-supervision.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$fixture/.pi/extensions/lib/fm-branch-dispatch.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-calm-visibility.ts" "$fixture/.pi/extensions/lib/fm-calm-visibility.ts"
+  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/fm-operational-input.ts"
+  ln -s "$package_dir" "$fixture/node_modules/@earendil-works/pi-coding-agent"
+  ln -s "$package_dir/node_modules/@earendil-works/pi-tui" "$fixture/node_modules/@earendil-works/pi-tui"
+  ln -s "$package_dir/node_modules/typebox" "$fixture/node_modules/typebox"
+
+  out=$(cd "$fixture" && EXT="$fixture/.pi/extensions/fm-branch-supervision.ts" PI_PACKAGE_DIR="$package_dir" node --input-type=module 2>&1 <<'JS'
+import { pathToFileURL } from "node:url";
+
+const packageRoot = process.env.PI_PACKAGE_DIR;
+const [{ ToolExecutionComponent }, { createToolHtmlRenderer }, { initTheme, theme }] = await Promise.all([
+  import(pathToFileURL(`${packageRoot}/dist/modes/interactive/components/tool-execution.js`).href),
+  import(pathToFileURL(`${packageRoot}/dist/core/export-html/tool-renderer.js`).href),
+  import(pathToFileURL(`${packageRoot}/dist/modes/interactive/theme/theme.js`).href),
+]);
+initTheme("dark");
+
+const listeners = new Map();
+const tools = [];
+const pi = {
+  events: {
+    on(name, listener) {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener]);
+    },
+    emit(name, data) {
+      for (const listener of listeners.get(name) ?? []) listener(data);
+    },
+  },
+  on() {},
+  registerCommand() {},
+  registerMessageRenderer() {},
+  registerTool(tool) { tools.push(tool); },
+  sendMessage() {},
+  sendUserMessage() {},
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?consumer=${Date.now()}`);
+extension.default(pi);
+const actualDefinition = tools.find((tool) => tool.name === "fm_branch_outcomes");
+if (!actualDefinition) throw new Error("fm_branch_outcomes was not registered");
+const stockDefinition = { ...actualDefinition };
+delete stockDefinition.renderShell;
+delete stockDefinition.renderCall;
+delete stockDefinition.renderResult;
+
+const args = { recent: 2 };
+const result = {
+  content: [{ type: "text", text: "\x1b[31mOUTCOME_ONE\x1b[0m\r\nOUT\u0000COME_TWO\uFFF9" }],
+  details: { ok: true },
+  isError: false,
+};
+const ui = { requestRender() {} };
+const stockRow = new ToolExecutionComponent("fm_branch_outcomes", "stock", args, { showImages: false }, stockDefinition, ui, process.cwd());
+const actualRow = new ToolExecutionComponent("fm_branch_outcomes", "actual", args, { showImages: false }, actualDefinition, ui, process.cwd());
+for (const row of [stockRow, actualRow]) {
+  row.markExecutionStarted();
+  row.setArgsComplete();
+  row.updateResult(result);
+}
+if (JSON.stringify(actualRow.render(100)) !== JSON.stringify(stockRow.render(100))) {
+  throw new Error("Calm-off ToolExecutionComponent rendering differs from Pi stock");
+}
+pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: false });
+actualRow.invalidate();
+if (actualRow.render(100).length !== 0) {
+  throw new Error("Calm-on ToolExecutionComponent row remained visible");
+}
+pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
+actualRow.invalidate();
+if (JSON.stringify(actualRow.render(100)) !== JSON.stringify(stockRow.render(100))) {
+  throw new Error("ToolExecutionComponent rendering did not restore after live toggle");
+}
+
+pi.events.emit("firstmate:calm-presentation", { active: true, stockExportRendering: true });
+const stockHtml = createToolHtmlRenderer({ getToolDefinition: () => stockDefinition, theme, cwd: process.cwd() });
+const actualHtml = createToolHtmlRenderer({ getToolDefinition: () => actualDefinition, theme, cwd: process.cwd() });
+const stockCall = stockHtml.renderCall("stock-html", "fm_branch_outcomes", args);
+const actualCall = actualHtml.renderCall("actual-html", "fm_branch_outcomes", args);
+const stockResult = stockHtml.renderResult("stock-html", "fm_branch_outcomes", result.content, result.details, false);
+const actualResult = actualHtml.renderResult("actual-html", "fm_branch_outcomes", result.content, result.details, false);
+if (actualCall !== undefined || actualResult !== undefined || stockCall !== undefined || stockResult !== undefined) {
+  throw new Error("stock export rendering did not delegate to Pi's structured fallback");
+}
+JS
+  )
+  status=$?
+  expect_code 0 "$status" "Pi outcomes rendering consumers must preserve stock behavior: $out"
+  [ -z "$out" ] || fail "Pi outcomes rendering consumer test printed output: $out"
+  pass "fm_branch_outcomes hides through ToolExecutionComponent while Calm-off and HTML export stay stock"
+}
+
+test_outcomes_tool_uses_stock_execution_and_export_consumers
 test_branch_dispatch_two_stage_filter_and_prefix_contract
+test_branch_dispatch_classifies_main_only_rows_and_writes_the_eligible_snapshot
 test_branch_cache_key_is_per_home_stable
 test_branch_default_on_heartbeat_afk_and_fallback
 test_branch_predrain_recheck_defers_new_main_owned_row
+test_branch_predrain_recheck_excludes_new_main_owned_row_without_deferring_eligible_work
+test_settled_branch_prompt_releases_unacknowledged_grant
+test_main_owned_grant_result_falls_back_to_main
 test_branch_predrain_recheck_noops_already_drained_wake
 test_branch_mirror_filters_order_and_cursor
 test_branch_session_persists_across_process_restarts
+test_branch_model_pin_applies_and_absent_pin_keeps_the_default
+test_unpinned_branch_follows_main_model_changes_live
+test_supervision_model_command_persists_and_rebinds_the_live_branch
+test_unusable_model_pin_falls_back_to_main
 test_replacement_activation_cleans_leases_and_retries_failure
 test_cold_start_activates_after_lock_acquisition
 test_queued_actions_recheck_lock_ownership

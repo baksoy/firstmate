@@ -36,16 +36,32 @@ This preference is local to each Firstmate home and is not part of secondmate in
 
 ## Pi supervision branch
 
-On a Pi primary, ordinary actionable fleet wakes that pass the unchanged watcher classifier, plus heartbeat scans that the cheap bash-level scan flags as possibly captain-relevant, are handled by a persistent in-process supervision branch that keeps the captain's conversation clean; [docs/pi-supervision-branch.md](pi-supervision-branch.md) owns the architecture.
+On a Pi primary, a persistent in-process supervision branch handles eligible task-local wake rows and selected heartbeat reviews while keeping main-only rows on the captain-facing path; [docs/pi-supervision-branch.md](pi-supervision-branch.md) owns row eligibility, mixed-queue dispatch, heartbeat routing, and the pre-drain recheck.
 Supervision is default-on: once a Pi primary session owns this home's fleet lock, the branch is eligible for every task with no captain grant file required.
-A wake is delegated only when every row observed by its unread-queue eligibility checks is either a resolvable task-local signal or stale event or a heartbeat; a genuinely no-op heartbeat is absorbed in bash and never reaches Pi, while an observed fleet-wide or unresolvable wake and every watcher-failure alarm stays on the captain-facing main path.
-The branch repeats the eligibility check immediately before prompting the branch to drain; [docs/pi-supervision-branch.md](pi-supervision-branch.md) owns the accepted confused-agent-grade race limit between that final check and drain startup.
+A genuinely no-op heartbeat is absorbed in bash and never reaches Pi, and every watcher-failure alarm stays on the captain-facing main path.
 Away mode still declines every wake offer, and a broken branch still falls back to today's wake-to-main path.
 The branch's role stays bounded exactly as the captain-approved architecture set it: it cannot merge a PR, land local work, or freshly spawn, and every existing captain gate remains unchanged.
 Homes on any other primary harness never load this feature and are entirely unaffected.
-Runtime state lives in `state/branch-outcomes.jsonl` with its `.branch-outcomes-cursor`, the persistent conversation under `state/branch-session/` with its `.branch-session` pointer and `.branch-mirror-cursor`, and per-task `state/.lease-<task>` files; `bin/fm-branch-outcome.sh` and `bin/fm-lease-lib.sh` own those formats.
+`AGENTS.md`'s `state/` inventory routes the branch's runtime files to their format and lifecycle owners.
 A captain-facing (verdict `captain`) branch outcome opens exactly one follow-up turn on main - that turn is the captain-visible result, and Pi never separately prints or renders the merge note itself.
 A no-change heartbeat outcome explicitly reported with `task=fleet` and `silent=true` is delivered silently with no rendered note, while every other routine outcome still appends a rendered, sailboat-prefixed note.
+
+## Pi supervision branch model (config/supervision-branch-model)
+
+Supervision is an easier job than the captain's own conversation, so the branch can run on a cheaper model than main.
+The Pi `/supervision-model` command opens Pi's own selector over the models that Pi reports with configured credentials and that this home's stored credentials let the isolated supervision branch resolve, plus a first "Follow main" entry, and persists the pick in gitignored `config/supervision-branch-model` under the effective Firstmate home, resolved from `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked code root derived from the extension path, or under `FM_CONFIG_OVERRIDE` when that test and specialized-setup override is present.
+Firstmate keeps no model catalog of its own; the list is the intersection of what Pi reports when the picker opens and what a fresh isolated branch runtime can run.
+A provider that exists only because an extension registered it inside the captain's session is not offered, while stored OAuth and API-key credentials retain their native credential type because Firstmate never copies, converts, installs, or overwrites credentials for the branch runtime.
+The file holds one `<provider>/<model-id>` line followed by one newline, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
+An absent, unreadable, or unparseable file means no pin, and the branch then follows main's own current model, applied explicitly and live whenever main changes models mid-session.
+A valid pin wins over main and remains unaffected by main's model changes.
+Picking "Follow main" removes the file, and the command writes a pin at mode `0600` and replaces it atomically so a failed write leaves the current choice unchanged rather than claiming persistence.
+The file's current state decides the branch model on every branch build - the first wake of a cold start and the reopen after `/new`, `/resume`, `/fork`, or reload - and it overrides Pi's restore of whatever model a reopened branch session recorded, so the choice survives all of them.
+That override is what keeps "Follow main" honest: a branch conversation that ran under an earlier pin still records that model, so clearing the file explicitly applies main's model rather than letting the reopened session restore the old one.
+Only when main's own model is unknown, or this home's stored credentials cannot run it in the isolated branch runtime, does an unpinned build fall back to passing no override at all, which is the behavior from before this file existed; the wake is never lost over model choice, and the command says plainly when main's model could not be applied instead of reporting a change that did not take effect.
+Picking also releases the live branch so the next wake reopens the same persistent branch conversation under the new model without waiting for a session replacement.
+A pin naming a model Pi cannot hand back, because the model is unknown or has no configured credentials, is never silently downgraded onto main's model: the branch refuses to build and the wake falls back to the captain-facing main path naming the unusable pin, exactly as any other unreachable branch does.
+This choice is local to each Firstmate home and is not part of secondmate inherited configuration, the same as the Pi Calm preference; a secondmate home pins its own supervision model with its own `/supervision-model`.
 
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 

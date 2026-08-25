@@ -35,14 +35,22 @@
 // acknowledgement, so a branch that dies mid-handling re-presents its rows at
 // the next drain exactly as a mid-handling main crash always has.
 //
+// Model selection: supervision is an easier job than main, so the captain can
+// pin a cheaper model for the branch alone with /supervision-model, which
+// picks from Pi's own catalog and persists one line under this home's
+// config/. docs/configuration.md owns that file's operator-facing schema. No
+// pin makes the branch follow main's own model when the isolated runtime can
+// resolve it, applied explicitly on every build so a reopened branch cannot
+// restore a model an earlier pin left in its session.
+//
 // Threat model (captain-decided): the branch's actor identity is
 // CONFUSED-AGENT-GRADE - deterministic spawnHook env injection plus a
 // readonly-variable shell prelude so an accidental override fails loudly
 // inside the branch's own shell. bin/fm-lease-lib.sh documents the grade and
 // its deliberate limits.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -50,16 +58,26 @@ import {
   createBashToolDefinition,
   DefaultResourceLoader,
   getAgentDir,
+  ModelRuntime,
   SessionManager,
   type AgentSession,
   type ExtensionAPI,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Box, Container, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+  type CalmPresentationState,
+  calmTranscriptClassIsVisible,
+  FIRSTMATE_CALM_PRESENTATION_EVENT,
+} from "./lib/fm-calm-visibility.ts";
+import {
+  activateEligibleRowsOwner,
+  deactivateEligibleRowsOwner,
   FM_BRANCH_DISPATCH_EVENT,
+  releaseEligibleRowsSnapshot,
   scopeForUnreadWake,
+  writeEligibleRowsSnapshot,
   type BranchDispatchOffer,
 } from "./lib/fm-branch-dispatch.ts";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.ts";
@@ -78,7 +96,9 @@ const mirrorCursorFile = join(state, ".branch-mirror-cursor");
 const promptScript = join(fmRoot, "bin", "fm-branch-prompt.sh");
 const outcomeScript = join(fmRoot, "bin", "fm-branch-outcome.sh");
 const leaseScript = join(fmRoot, "bin", "fm-lease.sh");
+const wakeGrantScript = join(fmRoot, "bin", "fm-wake-grant.sh");
 const loadedMarker = join(state, ".pi-branch-extension-loaded");
+const modelPinFile = join(config, "supervision-branch-model");
 
 // Same tool set in the same order on every request (part of the cached
 // prefix). "bash" resolves to the customTools override below, which injects
@@ -110,6 +130,51 @@ function offerEligible(offer: BranchDispatchOffer): boolean {
 
 function afkActive(): boolean {
   return existsSync(afkFlag);
+}
+
+// One model the runtime can hand back, without importing pi-ai directly.
+type BranchModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
+type PinnedBranchModel = { model: BranchModel; modelRuntime: ModelRuntime };
+type BranchModelResolution = { ok: true; selection: PinnedBranchModel } | { ok: false; reason: string };
+
+// The supervision-branch model pin, owned operator-side by
+// docs/configuration.md: one "<provider>/<model-id>" line under this home's
+// config/. An absent, unreadable, or unparseable file means no pin, and the
+// branch then follows main's own model. Only the FIRST "/" separates the two
+// halves, so a provider-qualified model id such as
+// openrouter/anthropic/claude survives.
+function readModelPin(): { provider: string; modelId: string } | null {
+  let stored: string;
+  try {
+    stored = readFileSync(modelPinFile, "utf8");
+  } catch {
+    return null;
+  }
+  const line = (stored.split("\n")[0] ?? "").trim();
+  const separator = line.indexOf("/");
+  if (separator <= 0 || separator >= line.length - 1) return null;
+  return { provider: line.slice(0, separator), modelId: line.slice(separator + 1) };
+}
+
+// Replaces the pin atomically so a failed write leaves the current choice
+// intact rather than claiming persistence (the config/calm precedent).
+function writeModelPin(selection: string): void {
+  mkdirSync(dirname(modelPinFile), { recursive: true });
+  const temporaryPath = `${modelPinFile}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, `${selection}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    renameSync(temporaryPath, modelPinFile);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+function clearModelPin(): void {
+  rmSync(modelPinFile, { force: true });
+}
+
+function modelLabel(model: { provider: string; id: string }): string {
+  return `${model.provider}/${model.id}`;
 }
 
 function parentPid(pid: string): string {
@@ -252,6 +317,60 @@ export default function (pi: ExtensionAPI) {
   let branchChain: Promise<void> = Promise.resolve();
   const pendingMirror: MirrorItem[] = [];
   const mirrorCollection: MirrorCollectionState = { collectAnchor: null, pendingCursor: null };
+  let modelSelectionRevision = 0;
+  // Main's own current model, tracked from the contexts Pi already hands this
+  // extension plus its model_select event, because createBranch runs at wake
+  // time with no context of its own. It is what "follow main" applies.
+  let mainModel: { provider: string; id: string } | null = null;
+
+  function rememberMainModel(ctx?: { model?: { provider: string; id: string } }): void {
+    if (ctx?.model) mainModel = { provider: ctx.model.provider, id: ctx.model.id };
+  }
+
+  // Resolves one model against the isolated branch runtime using only the
+  // credentials that runtime already holds - the branch runs in the same home
+  // and same user as main, so stored credentials keep their own semantics
+  // (OAuth stays OAuth, an API key stays an API key) and nothing is ever
+  // installed, converted, derived, or overwritten here.
+  async function resolveBranchModel(provider: string, modelId: string): Promise<BranchModelResolution> {
+    const label = `${provider}/${modelId}`;
+    const modelRuntime = await ModelRuntime.create();
+    const model = modelRuntime.getModel(provider, modelId) as BranchModel | undefined;
+    if (!model) return { ok: false, reason: `${label} is unavailable to the isolated branch runtime` };
+    if (!modelRuntime.hasConfiguredAuth(provider)) {
+      return { ok: false, reason: `${label} has no configured credentials in the isolated branch runtime` };
+    }
+    return { ok: true, selection: { model, modelRuntime } };
+  }
+
+  async function preparePinnedBranchModel(pin: { provider: string; modelId: string }): Promise<PinnedBranchModel> {
+    const resolved = await resolveBranchModel(pin.provider, pin.modelId);
+    if (!resolved.ok) {
+      throw new Error(`supervision model pin ${resolved.reason} (config/supervision-branch-model)`);
+    }
+    return resolved.selection;
+  }
+
+  // The pin file's CURRENT state decides the model on every branch build,
+  // create and reopen alike, and it overrides Pi's restore of whatever model
+  // a reopened branch session recorded. With a pin, that model. With no pin,
+  // main's own model is applied EXPLICITLY - otherwise clearing the pin would
+  // report that the branch follows main while the reopened session quietly
+  // restored the model an earlier pin left behind. Only when main's model is
+  // genuinely unknown, or the isolated runtime cannot run it, does the build
+  // fall back to passing no override at all, which is the pre-feature
+  // behavior; an unpinned branch is never refused over model choice alone.
+  async function branchModelSelection(): Promise<PinnedBranchModel | undefined> {
+    const pin = readModelPin();
+    if (pin) return preparePinnedBranchModel(pin);
+    if (!mainModel) return undefined;
+    try {
+      const resolved = await resolveBranchModel(mainModel.provider, mainModel.id);
+      return resolved.ok ? resolved.selection : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 
   function generationOwnsLock(expectedGeneration: number): boolean {
     return !shuttingDown && expectedGeneration === generation && lockOwnership() === "owned";
@@ -292,6 +411,11 @@ export default function (pi: ExtensionAPI) {
     if (activatedGeneration !== expectedGeneration) {
       if (!releaseBranchLeases(expectedGeneration)) return false;
       if (!generationOwnsLock(expectedGeneration)) return false;
+      if (!activateEligibleRowsOwner(state, wakeGrantScript, process.pid, String(expectedGeneration))) return false;
+      if (!generationOwnsLock(expectedGeneration)) {
+        deactivateEligibleRowsOwner(state, wakeGrantScript, process.pid, String(expectedGeneration));
+        return false;
+      }
       markLoaded();
       activatedGeneration = expectedGeneration;
     }
@@ -422,6 +546,12 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function createBranch(branchGeneration: number): Promise<AgentSession> {
+    // Resolved first, before any session file or prompt work: a pin Pi cannot
+    // honor must fail before this build leaves anything behind. Every branch
+    // build goes through here - first wake of a cold start, and the reopen
+    // after /new, /resume, /fork, or reload - so resolving it here is what
+    // makes the captain's current choice authoritative on all of them.
+    const pinned = await branchModelSelection();
     const prompt = spawnSync("bash", [promptScript], {
       cwd: fmRoot,
       encoding: "utf8",
@@ -511,6 +641,7 @@ ${context.command}
       resourceLoader: loader,
       tools: [...BRANCH_TOOL_NAMES],
       customTools: [bashTool as unknown as ToolDefinition, createReportTool(branchGeneration)],
+      ...(pinned ? { model: pinned.model, modelRuntime: pinned.modelRuntime } : {}),
     });
     if (!actingAsOwner(branchGeneration)) {
       try {
@@ -530,21 +661,31 @@ ${context.command}
     if (!actingAsOwner(expectedGeneration)) throw new Error("supervision session was replaced or lost lock ownership");
     if (branch) return branch;
     if (branchBroken) throw new Error(branchBroken);
-    try {
-      const created = await createBranch(expectedGeneration);
-      if (!actingAsOwner(expectedGeneration)) {
-        try {
-          created.dispose();
-        } catch {}
-        throw new Error("supervision session was replaced or lost lock ownership");
+    while (true) {
+      const buildRevision = modelSelectionRevision;
+      try {
+        const created = await createBranch(expectedGeneration);
+        if (buildRevision !== modelSelectionRevision) {
+          try {
+            created.dispose();
+          } catch {}
+          continue;
+        }
+        if (!actingAsOwner(expectedGeneration)) {
+          try {
+            created.dispose();
+          } catch {}
+          throw new Error("supervision session was replaced or lost lock ownership");
+        }
+        branch = created;
+        return created;
+      } catch (error) {
+        if (buildRevision !== modelSelectionRevision) continue;
+        if (expectedGeneration === generation && !shuttingDown) {
+          branchBroken = error instanceof Error ? error.message : String(error);
+        }
+        throw error;
       }
-      branch = created;
-      return created;
-    } catch (error) {
-      if (expectedGeneration === generation && !shuttingDown) {
-        branchBroken = error instanceof Error ? error.message : String(error);
-      }
-      throw error;
     }
   }
 
@@ -592,22 +733,64 @@ ${context.command}
         if (!actingAsOwner(acceptedGeneration)) throw new Error("supervision session no longer owns the fleet lock");
         const heartbeat = /^heartbeat($|:)/.test(message);
         const scope = scopeForUnreadWake(state, heartbeat);
-        if (scope.status === "empty") return;
-        if (scope.status === "unsafe") {
-          throw new Error("unread wake queue now contains a main-owned row or could not be read safely");
+        // A newly-arrived main-owned (check-kind) row never bounces this
+        // whole recheck back to main any more - scopeForUnreadWake already
+        // excludes it from eligibleSeqs rather than vetoing the scan, so it
+        // stays queued for main while whatever else is eligible right now
+        // still reaches the branch. A genuinely empty queue, or a queue that
+        // simply has nothing (or nothing further) eligible for the branch
+        // right now, is an ordinary quiet no-op - not a fault, so it is
+        // never reported back to main. Only a scan scopeForUnreadWake itself
+        // marks corrupted (the queue or its metadata could not be read
+        // safely, or - for a heartbeat review - a main-owned row anywhere in
+        // the unread queue, since a heartbeat needs full-fleet context)
+        // still falls back to main.
+        if (scope.status === "empty" || (!scope.corrupted && scope.eligibleSeqs.length === 0)) return;
+        if (scope.corrupted) {
+          throw new Error("the unread wake queue could not be read safely");
         }
+        const grant = writeEligibleRowsSnapshot(
+          state,
+          scope.eligibleSeqs,
+          wakeGrantScript,
+          String(acceptedGeneration),
+        );
+        if (grant === "main-owned") throw new Error("the wake rows are already claimed by main");
+        if (grant !== "published") throw new Error("could not record the branch's eligible row snapshot");
         // A row can still arrive between this re-check and the model starting
         // the drain; that residual is accepted by the confused-agent-grade boundary.
         await session.prompt(
           `FIRSTMATE SUPERVISION WAKE: ${message}\n\nHandle this per your operating procedure and finish with fm_branch_report.`,
         );
+        if (!releaseEligibleRowsSnapshot(state, wakeGrantScript, String(acceptedGeneration))) {
+          throw new Error("could not release the branch's settled wake-row grant");
+        }
       })
       .catch(async (error: unknown) => {
-        // Return the wake to main rather than losing it; the durable wake
-        // queue additionally re-presents anything never acknowledged.
+        releaseEligibleRowsSnapshot(state, wakeGrantScript, String(acceptedGeneration));
         try {
           await fallbackToMain(message, error instanceof Error ? error.message : String(error));
         } catch {}
+      });
+  }
+
+  // A model change applies to the next branch turn without waiting for /new:
+  // the live session is dropped synchronously so nothing enqueued afterwards
+  // can capture it, then disposed in dispatch order behind work already
+  // queued. The branch CONVERSATION is persistent (state/.branch-session), so
+  // the next wake reopens the same conversation under the new model. Clearing
+  // the broken latch is what lets a corrected pin recover in place.
+  function releaseBranchForModelChange(): void {
+    branchBroken = "";
+    const stale = branch;
+    branch = null;
+    if (!stale) return;
+    branchChain = branchChain
+      .then(() => {
+        stale.dispose();
+      })
+      .catch(() => {
+        // Already gone, or disposed by a session replacement first.
       });
   }
 
@@ -655,6 +838,7 @@ ${context.command}
   // lands before any later wake. The durable cursor advances only in
   // flushMirror after the complete pending batch reaches the branch.
   pi.on?.("turn_end", (_event, ctx) => {
+    rememberMainModel(ctx);
     if (!actingAsOwner()) return;
     try {
       pendingMirror.push(...collectMainDialog(ctx.sessionManager, mirrorCollection));
@@ -671,14 +855,30 @@ ${context.command}
   // cursor, and releases the branch session; a replacement session_start
   // re-arms, and the next wake reopens the persistent branch from its
   // recorded pointer. Terminal quit simply never fires another session_start.
-  pi.on?.("session_start", () => {
+  pi.on?.("session_start", (_event, ctx) => {
+    rememberMainModel(ctx);
     shuttingDown = false;
     branchBroken = "";
     generation += 1;
     actingAsOwner(generation);
   });
 
+  // Pi emits this for /model, Ctrl+P cycling, and session restore, so it is
+  // the authoritative signal that "follow main" now means a different model.
+  // A model change often follows a quota failure, so an unpinned supervision
+  // branch follows live rather than retaining a model that may no longer work.
+  pi.on?.("model_select", (event) => {
+    const selected = (event as { model?: { provider: string; id: string } }).model;
+    if (!selected) return;
+    const changed = !mainModel || mainModel.provider !== selected.provider || mainModel.id !== selected.id;
+    mainModel = { provider: selected.provider, id: selected.id };
+    if (!changed || readModelPin()) return;
+    modelSelectionRevision += 1;
+    releaseBranchForModelChange();
+  });
+
   pi.on?.("session_shutdown", () => {
+    deactivateEligibleRowsOwner(state, wakeGrantScript, process.pid, String(generation));
     shuttingDown = true;
     generation += 1;
     pendingMirror.length = 0;
@@ -694,6 +894,138 @@ ${context.command}
     }
   });
 
+  // Pi keeps /model for the captain's own conversation and exposes no hook an
+  // extension can use to open that picker, so this is the smallest supported
+  // equivalent: Pi's own catalog intersected with the isolated branch
+  // runtime, Pi's own selector dialog, and no parallel Firstmate model list.
+  pi.registerCommand?.("supervision-model", {
+    description: "Pick the model Firstmate's Pi supervision branch uses, or follow main's.",
+    handler: async (_args, ctx) => {
+      rememberMainModel(ctx);
+      const pin = readModelPin();
+      const current = pin ? `${pin.provider}/${pin.modelId}` : "follows main";
+      const followMain = `Follow main${ctx.model ? ` (${modelLabel(ctx.model)})` : ""}`;
+      let available: string[];
+      try {
+        const modelRuntime = await ModelRuntime.create();
+        available = ctx.modelRegistry
+          .getAvailable()
+          .filter((model) => modelRuntime.getModel(model.provider, model.id) && modelRuntime.hasConfiguredAuth(model.provider))
+          .map(modelLabel);
+      } catch (error) {
+        ctx.ui.notify(
+          `Could not read the supervision branch models: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+        return;
+      }
+      const picked = await ctx.ui.select(`Supervision branch model (now: ${current})`, [followMain, ...available]);
+      if (picked === undefined) return; // cancelled: the current choice stands
+      try {
+        if (picked === followMain) {
+          clearModelPin();
+        } else {
+          const separator = picked.indexOf("/");
+          if (separator <= 0 || separator >= picked.length - 1) throw new Error(`invalid model selection: ${picked}`);
+          await preparePinnedBranchModel({ provider: picked.slice(0, separator), modelId: picked.slice(separator + 1) });
+          writeModelPin(picked);
+        }
+      } catch (error) {
+        ctx.ui.notify(
+          `Could not apply or save the supervision branch model: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+        return;
+      }
+      modelSelectionRevision += 1;
+      releaseBranchForModelChange();
+      if (picked !== followMain) {
+        ctx.ui.notify(`Supervision branch model: ${picked}.`, "info");
+        return;
+      }
+      // Clearing the pin only follows main if main's model can actually be
+      // applied to the branch; say what will really happen rather than
+      // reporting a state that did not take effect.
+      try {
+        const following = mainModel ? await resolveBranchModel(mainModel.provider, mainModel.id) : null;
+        if (following?.ok) {
+          ctx.ui.notify(`Supervision branch follows main's model (${modelLabel(following.selection.model)}).`, "info");
+          return;
+        }
+        const why = following ? following.reason : "main's model is not known yet";
+        ctx.ui.notify(
+          `Supervision branch pin cleared, but main's model could not be applied (${why}); the branch keeps the model its own session recorded until that conversation is replaced.`,
+          "warning",
+        );
+      } catch (error) {
+        ctx.ui.notify(
+          `Supervision branch pin cleared, but main's model could not be applied (${error instanceof Error ? error.message : String(error)}); the branch keeps the model its own session recorded until that conversation is replaced.`,
+          "warning",
+        );
+      }
+    },
+  });
+
+  let calmPresentation: CalmPresentationState = {
+    active: false,
+    stockExportRendering: false,
+  };
+  pi.events?.on?.(FIRSTMATE_CALM_PRESENTATION_EVENT, (data) => {
+    const next = data as Partial<CalmPresentationState>;
+    calmPresentation = {
+      active: next.active === true,
+      stockExportRendering: next.stockExportRendering === true,
+    };
+  });
+  const calmHides = (itemClass: Parameters<typeof calmTranscriptClassIsVisible>[0]): boolean =>
+    calmPresentation.active &&
+    !calmPresentation.stockExportRendering &&
+    !calmTranscriptClassIsVisible(itemClass);
+
+  const outcomesToolAnsiPattern = new RegExp(
+    "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B][[\\]\\()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]",
+    "g",
+  );
+  const normalizeOutcomesToolOutput = (value: string): string => {
+    const withoutAnsi = value.includes("\u001B") || value.includes("\u009B")
+      ? value.replace(outcomesToolAnsiPattern, "")
+      : value;
+    return Array.from(withoutAnsi)
+      .filter((char) => {
+        const code = char.codePointAt(0);
+        if (code === undefined) return false;
+        if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
+        if (code <= 0x1f) return false;
+        return code < 0xfff9 || code > 0xfffb;
+      })
+      .join("")
+      .replace(/\r/g, "");
+  };
+
+  type OutcomesToolShellState = {
+    shell?: Box;
+    call?: Text;
+    result?: Text | Container;
+  };
+  const refreshOutcomesToolShell = (
+    shellState: OutcomesToolShellState,
+    theme: Parameters<NonNullable<ToolDefinition["renderCall"]>>[1],
+    context: Parameters<NonNullable<ToolDefinition["renderCall"]>>[2],
+  ): Box => {
+    const background = context.isPartial
+      ? (text: string) => theme.bg("toolPendingBg", text)
+      : context.isError
+        ? (text: string) => theme.bg("toolErrorBg", text)
+        : (text: string) => theme.bg("toolSuccessBg", text);
+    const shell = shellState.shell ?? new Box(1, 1, background);
+    shellState.shell = shell;
+    shell.setBgFn(background);
+    shell.clear();
+    if (shellState.call) shell.addChild(shellState.call);
+    if (shellState.result) shell.addChild(shellState.result);
+    return shell;
+  };
+
   pi.registerTool?.({
     name: "fm_branch_outcomes",
     label: "Read supervision branch outcomes",
@@ -703,6 +1035,26 @@ ${context.command}
     parameters: Type.Object({
       recent: Type.Optional(Type.Number({ description: "How many most-recent outcomes to read (default 20)" })),
     }),
+    renderShell: "self",
+    renderCall: (_args, theme, context) => {
+      if (calmPresentation.stockExportRendering) throw new Error("Use Pi stock export rendering");
+      if (calmHides("assistant-tool-call")) return new Container();
+      const shellState = context.state as OutcomesToolShellState;
+      shellState.call = new Text(theme.fg("toolTitle", theme.bold("fm_branch_outcomes")), 0, 0);
+      return refreshOutcomesToolShell(shellState, theme, context);
+    },
+    renderResult: (result, _options, theme, context) => {
+      if (calmPresentation.stockExportRendering) throw new Error("Use Pi stock export rendering");
+      if (calmHides("tool-result")) return new Container();
+      const output = result.content
+        .filter((item) => item.type === "text")
+        .map((item) => normalizeOutcomesToolOutput(item.text))
+        .join("\n");
+      const shellState = context.state as OutcomesToolShellState;
+      shellState.result = output ? new Text(theme.fg("toolOutput", output), 0, 0) : new Container();
+      refreshOutcomesToolShell(shellState, theme, context);
+      return new Container();
+    },
     execute: async (_toolCallId, params) => {
       const recentRaw = (params as { recent?: unknown }).recent;
       const recent = typeof recentRaw === "number" && recentRaw >= 1 ? String(Math.floor(recentRaw)) : "20";
