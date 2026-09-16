@@ -13,3 +13,5 @@ __pycache__/
 config/
 
 .tools/
+.backpass/
+.backpassrc.json
