@@ -838,7 +838,7 @@ spawn_remote_secondmate() {
   elif [ -n "$positional" ]; then
     harness=$positional
   else
-    harness=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
+    harness=$("$FM_ROOT/bin/fm-harness.sh" secondmate "$id")
   fi
   case "$harness" in
   claude | codex | opencode | pi | pi-signed | grok | kimi | cursor) ;;
@@ -853,11 +853,11 @@ spawn_remote_secondmate() {
   effort=${EFFORT:--}
   if [ -z "$HARNESS_ARG" ] && [ -z "$positional" ]; then
     if [ "$MODEL_SET" -eq 0 ]; then
-      model=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
+      model=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model "$id")
       [ -n "$model" ] || model=-
     fi
     if [ "$EFFORT_SET" -eq 0 ]; then
-      effort=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
+      effort=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort "$id")
       [ -n "$effort" ] || effort=-
     fi
   fi
@@ -2074,16 +2074,17 @@ case "$ARG3" in
   ;;
 '')
   # No explicit harness: resolve from config. A secondmate AGENT launches on the
-  # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
-  # every other kind uses the crew harness only when no dispatch profile file is
-  # active. Resolving here on every spawn is what makes the split DURABLE - a
-  # respawn (recovery, /updatefirstmate, restart) re-resolves, so
-  # config/secondmate-harness keeps governing secondmate launches across restarts.
+  # secondmate harness (per-mate pin config/secondmate-harness.<id> ->
+  # global config/secondmate-harness -> config/crew-harness -> own); every other
+  # kind uses the crew harness only when no dispatch profile file is active.
+  # Resolving here on every spawn is what makes the split DURABLE - a respawn
+  # (recovery, /updatefirstmate, restart) re-resolves, so the per-mate pin and
+  # config/secondmate-harness keep governing secondmate launches across restarts.
   # The launch_template lookup below is the unverified-adapter guard for both
   # kinds: a harness with no template aborts the spawn.
   if [ "$KIND" = secondmate ]; then
-    HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
-    harness_src='config/secondmate-harness (falling back to config/crew-harness)'
+    HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate "$ID")
+    harness_src='config/secondmate-harness (per-mate pin, falling back to config/crew-harness)'
   else
     if [ -f "$CONFIG/crew-dispatch.json" ]; then
       echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
@@ -2180,19 +2181,20 @@ agy)
   ;;
 esac
 
-# config/secondmate-harness may carry optional model/effort tokens alongside the
-# harness ("<harness> [<model>] [<effort>]"). They apply only when this is a
-# --secondmate spawn and no explicit per-spawn harness/raw launch was supplied, so
-# the harness itself came from the secondmate config fallback chain. Resolving
-# here on every spawn makes the pin durable across respawns. Precedence: explicit
-# --model/--effort flags still win over the file's tokens.
+# The resolved secondmate line (per-mate pin config/secondmate-harness.<id> above
+# the global config/secondmate-harness) may carry optional model/effort tokens
+# alongside the harness ("<harness> [<model>] [<effort>]"). They apply only when
+# this is a --secondmate spawn and no explicit per-spawn harness/raw launch was
+# supplied, so the harness itself came from the secondmate config fallback chain.
+# Resolving here on every spawn makes the pin durable across respawns. Precedence:
+# explicit --model/--effort flags still win over the file's tokens.
 if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   if [ "$MODEL_SET" -eq 0 ]; then
-    SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
+    SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model "$ID")
     [ -z "$SM_MODEL" ] || MODEL=$SM_MODEL
   fi
   if [ "$EFFORT_SET" -eq 0 ]; then
-    SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
+    SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort "$ID")
     if [ -n "$SM_EFFORT" ]; then
       case "$SM_EFFORT" in
       low | medium | high | xhigh | max | ultra) EFFORT=$SM_EFFORT ;;

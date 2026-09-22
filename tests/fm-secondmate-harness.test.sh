@@ -173,6 +173,48 @@ ROWS
 }
 
 # ===========================================================================
+# D) Per-mate runtime pin: config/secondmate-harness.<id> resolved ABOVE the
+#    single global config/secondmate-harness
+# ===========================================================================
+# The per-mate file carries the SAME "<harness> [<model>] [<effort>]" grammar and,
+# when a caller passes the secondmate id and that file holds a usable line, wins
+# over the global file entirely. With no per-mate file (or none for this id), the
+# global file resolves exactly as before this pin existed - the backward-compat
+# requirement. Each row sets the global file and (optionally) a per-mate file for
+# id "mate-a", then asserts what `fm-harness.sh secondmate mate-a` resolves. A
+# literal ABSENT skips creating that file; \n expresses a multi-line file body.
+#   <label>^<global-line-or-ABSENT>^<per-mate-line-or-ABSENT>^<query-id>^<exp-harness>^<exp-model>^<exp-effort>
+test_per_mate_pin_resolution() {
+  local label gline pline qid exp_h exp_m exp_e case_dir cfg got_h got_m got_e n
+  n=0
+  while IFS='^' read -r label gline pline qid exp_h exp_m exp_e; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    case_dir="$TMP_ROOT/permate-$n"
+    cfg="$case_dir/config"
+    mkdir -p "$cfg"
+    [ "$gline" = ABSENT ] || printf '%b\n' "$gline" > "$cfg/secondmate-harness"
+    [ "$pline" = ABSENT ] || printf '%b\n' "$pline" > "$cfg/secondmate-harness.mate-a"
+    got_h=$(PATH="$BLIND_BIN:$BASE_PATH" CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate "$qid")
+    got_m=$(PATH="$BLIND_BIN:$BASE_PATH" CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-model "$qid")
+    got_e=$(PATH="$BLIND_BIN:$BASE_PATH" CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-effort "$qid")
+    [ "$got_h" = "$exp_h" ] || fail "$label: harness resolved '$got_h', expected '$exp_h'"
+    [ "$got_m" = "$exp_m" ] || fail "$label: model resolved '$got_m', expected '$exp_m'"
+    [ "$got_e" = "$exp_e" ] || fail "$label: effort resolved '$got_e', expected '$exp_e'"
+  done <<'ROWS'
+per-mate pin present resolves ABOVE a differing global file^codex low^pi-signed openai-codex/gpt-5.6 xhigh^mate-a^pi-signed^openai-codex/gpt-5.6^xhigh
+per-mate pin absent -> falls through to the global file unchanged^codex opus high^ABSENT^mate-a^codex^opus^high
+per-mate file exists but is comment/blank only -> falls through to global^codex opus high^# note\n\n^mate-a^codex^opus^high
+per-mate model+effort tokens are parsed and applied^ABSENT^grok grok-4 max^mate-a^grok^grok-4^max
+bare-harness per-mate line behaves as harness-only (empty model/effort)^codex opus high^kimi^mate-a^kimi^^
+per-mate pin is scoped to its id; a different id still reads global^codex opus high^pi-signed model-x max^mate-b^codex^opus^high
+no id passed reads only the global file (backward-compat)^codex opus high^pi-signed model-x max^^codex^opus^high
+per-mate default token defers downward, not to the global harness^codex opus high^default^mate-a^claude^^
+ROWS
+  pass "D1 per-mate config/secondmate-harness.<id> resolves above the global file; absent/comment/other-id/no-id fall through unchanged"
+}
+
+# ===========================================================================
 # A/C) pi-signed process identity and shared Pi marker behavior
 # ===========================================================================
 test_pi_signed_detection_and_session_lock_identity() {
@@ -818,6 +860,64 @@ test_spawn_secondmate_harness_model_and_effort_tokens() {
   assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --model 'opus' --effort 'high'" \
     "model-effort-tokens: launch did not carry both --model opus and --effort high"
   pass "C4 spawn: config/secondmate-harness's model+effort tokens thread into the launch and meta"
+}
+
+# A per-mate pin config/secondmate-harness.<id> resolves the whole harness/model/
+# effort tuple ABOVE a differing global file, so a --secondmate spawn for that id
+# launches on the pinned runtime and records it in meta. This is the durable path:
+# the same resolution runs on every respawn (relaunch, liveness, /updatefirstmate
+# restart), so the pin cannot be silently reverted to the global default.
+test_spawn_per_mate_pin_overrides_global() {
+  local w sm meta launchlog launch
+  w="$TMP_ROOT/spawn-permate-pin"
+  sm="$w/sm"
+  launchlog="$w/launch.log"
+  mkdir -p "$w/home/config"
+  printf 'codex\n' > "$w/home/config/secondmate-harness"
+  printf 'claude opus high\n' > "$w/home/config/secondmate-harness.sm"
+  make_seeded_home "$sm" sm
+
+  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
+
+  meta="$w/home/state/sm.meta"
+  [ "$(meta_field "$meta" harness)" = claude ] \
+    || fail "permate-pin: meta harness not claude (got '$(meta_field "$meta" harness)'), the per-mate pin did not win over the global codex"
+  [ "$(meta_field "$meta" model)" = opus ] || fail "permate-pin: meta model not opus (got '$(meta_field "$meta" model)')"
+  [ "$(meta_field "$meta" effort)" = high ] || fail "permate-pin: meta effort not high (got '$(meta_field "$meta" effort)')"
+  launch=$(cat "$launchlog")
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --model 'opus' --effort 'high'" \
+    "permate-pin: launch did not carry the per-mate claude+opus+high runtime"
+  pass "C5 spawn: config/secondmate-harness.<id> per-mate pin resolves the launch above a differing global file"
+}
+
+# Precedence: an explicit per-spawn --harness still wins over the per-mate pin,
+# exactly as it wins over the global file. An explicit harness resets the model/
+# effort axes (they belong to the file's harness, not the chosen one), so the
+# per-mate pin's tokens do NOT leak onto the explicit launch.
+test_spawn_explicit_harness_overrides_per_mate_pin() {
+  local w sm meta launchlog launch
+  w="$TMP_ROOT/spawn-permate-explicit"
+  sm="$w/sm"
+  launchlog="$w/launch.log"
+  mkdir -p "$w/home/config"
+  printf 'grok\n' > "$w/home/config/secondmate-harness"
+  printf 'claude opus high\n' > "$w/home/config/secondmate-harness.sm"
+  make_seeded_home "$sm" sm
+
+  # Explicit per-spawn harness is the 4th positional (world id home ... harness).
+  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" codex >/dev/null 2>&1
+
+  meta="$w/home/state/sm.meta"
+  [ "$(meta_field "$meta" harness)" = codex ] \
+    || fail "permate-explicit: meta harness not codex (got '$(meta_field "$meta" harness)'), explicit --harness did not win over the per-mate pin"
+  [ "$(meta_field "$meta" model)" = default ] \
+    || fail "permate-explicit: meta model not default (got '$(meta_field "$meta" model)'), per-mate pin's model leaked onto the explicit harness"
+  [ "$(meta_field "$meta" effort)" = default ] \
+    || fail "permate-explicit: meta effort not default (got '$(meta_field "$meta" effort)'), per-mate pin's effort leaked onto the explicit harness"
+  launch=$(cat "$launchlog")
+  assert_not_contains "$launch" "--model 'opus'" "permate-explicit: launch leaked the per-mate model token"
+  assert_not_contains "$launch" "--effort 'high'" "permate-explicit: launch leaked the per-mate effort token"
+  pass "C6 spawn: an explicit per-spawn --harness still wins over the per-mate pin"
 }
 
 # Precedence: an explicit per-spawn --model overrides the file's model token.
@@ -2634,6 +2734,7 @@ SH
 test_harness_resolution
 test_cursor_marker_detection
 test_secondmate_model_effort_tokens
+test_per_mate_pin_resolution
 test_pi_signed_detection_and_session_lock_identity
 test_dash_leading_process_names_are_basename_operands
 test_propagate_lib
@@ -2648,6 +2749,8 @@ test_spawn_explicit_backend_precedence_over_env_and_inherited_config
 test_spawn_bare_harness_no_model_effort_flag
 test_spawn_secondmate_harness_model_token
 test_spawn_secondmate_harness_model_and_effort_tokens
+test_spawn_per_mate_pin_overrides_global
+test_spawn_explicit_harness_overrides_per_mate_pin
 test_spawn_explicit_model_overrides_secondmate_harness_token
 test_spawn_explicit_effort_overrides_secondmate_harness_token
 test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens
