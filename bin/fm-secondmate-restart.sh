@@ -269,12 +269,14 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     # which is the one owner of that resolution. A remote one cannot: it runs in
     # a home whose config/secondmate-harness is deliberately NOT inherited, so
     # the file on that host belongs to a different home and re-resolving there
-    # would silently move the mate onto another runtime. Resolve the pin here and
-    # pass it explicitly, so both placements land on the same decision.
-    HARNESS[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null || true)
+    # would silently move the mate onto another runtime. Resolve the pin here -
+    # keyed to this mate's id, so its per-mate pin config/secondmate-harness.<id>
+    # is honored above the global file - and pass it explicitly, so both
+    # placements land on the same decision.
+    HARNESS[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate "$id" 2>/dev/null || true)
     [ -n "${HARNESS[i]}" ] || HARNESS[i]=$FM_SECONDMATE_RESTART_HARNESS
-    MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
-    EFFORT[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
+    MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model "$id" 2>/dev/null || true)
+    EFFORT[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort "$id" 2>/dev/null || true)
     case "${EFFORT[i]}" in
       ''|low|medium|high|xhigh|max|ultra) ;;
       *) EFFORT[i]="" ;;

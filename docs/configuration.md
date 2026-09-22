@@ -351,6 +351,12 @@ The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
+An optional per-mate file `config/secondmate-harness.<id>` pins one named secondmate's own runtime.
+It uses the identical one-line `<harness> [<model>] [<effort>]` grammar and the same parser, so a per-mate file gains no new syntax; a `default` or absent harness token in it defers downward exactly as the global file does.
+When present for the mate being resolved, it is read above the global `config/secondmate-harness`, so the resolution order for a secondmate is an explicit per-spawn override, then that mate's per-mate file, then `config/secondmate-harness`, then `config/crew-harness`, then the primary's own harness.
+The `secondmate`, `secondmate-model`, and `secondmate-effort` verbs each accept an optional trailing `<id>` argument that selects the per-mate file; with no id, or an id that fails the path-safety check, they resolve the global file alone, so behavior is byte-for-byte unchanged when no per-mate file exists.
+Because every respawn path re-resolves this file by the mate's id at launch, a per-mate runtime survives updates, restarts, liveness relaunch, and recovery instead of reverting to the global default.
+Like the global file, `config/secondmate-harness.<id>` is local, gitignored, and not inherited into secondmate homes.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; for a local route, an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
