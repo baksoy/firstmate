@@ -146,7 +146,7 @@ On a Pi primary, supervision is default-on: the watcher extension can hand eligi
 The branch handles those rows, stores the outcome durably, and merges it back into main.
 A captain-facing outcome persists as one exact, sequence-keyed visible transcript entry and then opens one sequence-keyed processing turn on main, which only main's sequence-bound acknowledgement closes.
 [docs/pi-supervision-branch.md](pi-supervision-branch.md) owns row eligibility, dispatch architecture, deterministic outcome delivery, and processing re-presentation, while the generated [Pi supervision protocol](supervision-protocols/pi.md) owns MAIN's merged-event handling and acknowledgement duty.
-For the opt-in away-posture exception to the non-Pi harnesses' wake-to-main path, see [supervision-host.md](supervision-host.md).
+For the opt-in supervision host that runs the same branch contract beside a non-Pi primary, away and on Claude and Cursor also attended, see [supervision-host.md](supervision-host.md).
 
 ### Registered secondmate current state
 
@@ -204,7 +204,8 @@ The daemon's declared-wait window ages against the crew's own latest status line
 A wake already decorated as a possible wedge does not override the daemon's own declared-wait verdict either, so a declaration keeps its pane on the recheck cadence instead of the wedge cadence.
 In away mode, seen-status dedupe does not clear possible-wedge aging for nonterminal progress, so housekeeping still re-escalates an unchanged idle pane at the configured bound.
 Away-mode housekeeping has no worktree-write deferral of its own, so while `state/.afk` exists a quiet crew that is writing its own worktree still escalates as a possible wedge at that bound.
-The daemon escalates captain-relevant events, plus a bounded recheck for a declared external wait that is still declared, as one batched, single-line digest using the canonical `away-supervisor` kind from `bin/fm-operational-input.sh` so firstmate can distinguish it structurally from real messages; captain-held transfers remain silent until return while the posture record exists.
+The daemon escalates captain-relevant events, plus a bounded recheck for a declared external wait that is still declared, as one batched, single-line digest using the canonical `away-supervisor` kind from `bin/fm-operational-input.sh`; a Claude Code primary receives that owner's record-backed doorbell instead of the stripped invisible marker, so firstmate can distinguish the escalation from ordinary captain messages.
+Captain-held transfers remain silent until return while the posture record exists.
 Its supervisor injection path supports tmux and herdr panes, with `FM_SUPERVISOR_BACKEND` and `FM_SUPERVISOR_TARGET` resolved independently from the task-spawn backend.
 Pane existence, busy checks, composer checks, capture, and verified submit route through `bin/fm-backend.sh`: tmux keeps the same submit core used by the tmux send backend, while herdr, for a Claude pane, types only into an empty composer and withholds Enter until that composer shows the typed payload, and then uses native agent-state submit confirmation on idle baselines, a composer empty fallback when native stays idle, and a pre-Enter rendered-footer transition when that baseline is unavailable.
 The retries-exhausted queued-Enter decision is owned by `fm_composer_queued_enter_verdict` in `bin/fm-composer-lib.sh`; tmux and herdr provide only their backend-specific busy signals.
