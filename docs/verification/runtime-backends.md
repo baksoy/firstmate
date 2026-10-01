@@ -594,6 +594,49 @@ The real pane renders this inside a bordered box, omitted here for readability; 
 That capture demonstrated why each signature function matches the FULL captured tail rather than the Grok/Rovo/AGY busy-footer convention of the last 12 non-blank lines: a bordered dialog box renders many short lines of pure border and padding (`│  ...  │`) that are NOT whitespace-only, so the 12-line reduction pushed this exact heading text out of the window and silently defeated the match on the first attempt.
 None of these three runs ever answered its dialog (Escape only, never Enter), so no credential store was written to and no model tokens were spent.
 
+## Second mate model reconcile
+
+`bin/fm-secondmate-model-reconcile.sh` judges a Claude Code second mate's live model from two harness surfaces: the `--model` token in the launched process's argv and the model name the status line renders below the composer's bottom rule.
+`tests/fm-secondmate-model-reconcile-live-e2e.test.sh` (`FM_SECONDMATE_MODEL_LIVE=1`) drives both against real Claude Code in an isolated tmux lab and refreshes this record after an upgrade; `tests/fm-secondmate-model-reconcile.test.sh` pins the logic portably.
+
+Verified 2026-10-01 on Claude Code 2.1.286 under tmux, with the guard's own status line printing `.model.display_name`.
+A bare launch on this account renders `Opus 5.5`, the alias pin `sonnet` renders `Sonnet 5`, and the exact fleet pin id renders `Sonnet 5.5`, so an alias pin does not resolve to the same model as the exact id.
+
+```sh
+FM_SECONDMATE_MODEL_LIVE=1 FM_SECONDMATE_MODEL_LIVE_PIN='us.anthropic.claude-sonnet-5-5[1m]' bash tests/fm-secondmate-model-reconcile-live-e2e.test.sh
+```
+
+```
+# Claude Code (2.1.286 (Claude Code)) launches Opus 5.5 by default here; pinning the lab mates to us.anthropic.claude-sonnet-5-5[1m]
+# on-pin: onpin - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+# drifted: drift - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+# summary: 2 checked, 1 on-pin, 1 drifted, 0 repaired, 0 failed, 0 skipped, 0 unpinned, 0 unknown
+ok - live --check: Claude Code (2.1.286 (Claude Code)) argv and footer readings separate the pinned and the bare session
+# on-pin: onpin - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+# repaired: drift - was: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch); now: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+# summary: 2 checked, 1 on-pin, 0 drifted, 1 repaired, 0 failed, 0 skipped, 0 unpinned, 0 unknown
+ok - live --apply: Claude Code (2.1.286 (Claude Code)) exits on a typed /exit and the relaunch is proven on the pin
+```
+
+```sh
+FM_SECONDMATE_MODEL_LIVE=1 bash tests/fm-secondmate-model-reconcile-live-e2e.test.sh
+```
+
+```
+# Claude Code (2.1.286 (Claude Code)) launches Opus 5.5 by default here; pinning the lab mates to sonnet
+# on-pin: onpin - pin sonnet; live argv: --model sonnet (match); footer: Sonnet 5 (match)
+# drifted: drift - pin sonnet; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+# summary: 2 checked, 1 on-pin, 1 drifted, 0 repaired, 0 failed, 0 skipped, 0 unpinned, 0 unknown
+ok - live --check: Claude Code (2.1.286 (Claude Code)) argv and footer readings separate the pinned and the bare session
+# on-pin: onpin - pin sonnet; live argv: --model sonnet (match); footer: Sonnet 5 (match)
+# repaired: drift - was: pin sonnet; live argv: launched without --model; footer: Opus 5.5 (mismatch); now: pin sonnet; live argv: --model sonnet (match); footer: Sonnet 5 (match)
+# summary: 2 checked, 1 on-pin, 0 drifted, 1 repaired, 0 failed, 0 skipped, 0 unpinned, 0 unknown
+ok - live --apply: Claude Code (2.1.286 (Claude Code)) exits on a typed /exit and the relaunch is proven on the pin
+```
+
+The relaunch in both runs is the guard's spawn seam, which records the exact argv the command passes and starts the pinned session in the recorded window; a real `bin/fm-spawn.sh` relaunch is not part of this evidence.
+The Herdr endpoint path (`FM_SECONDMATE_MODEL_LIVE_HERDR=1`) is unverified: `bin/fm-herdr-lab.sh` requires exactly one running Herdr `default` session as its fleet tripwire, and it has not yet run on a host whose fleet uses that session.
+
 ## Worker account pin sign-in check
 
 `bin/fm-worker-account-lib.sh` decides whether a pinned account is signed in from vendor output: the exit status of `claude auth status`, the JSON of `pi auth check`, and the provider column of `pi --list-models`.
