@@ -13,8 +13,8 @@
 # (us.anthropic.claude-sonnet-5-5[1m]) while Claude Code's status line renders
 # its display name (Sonnet 5.5). A provider prefix, a context suffix such as
 # [1m] or "(1M context)", and a date or revision suffix are not part of the
-# identity. A bare family alias (sonnet) carries no version and matches any
-# version of that family.
+# identity. A bare family alias pin (sonnet) carries no version and accepts any
+# version of that family; a versioned pin never accepts a bare alias.
 
 # fm_sm_model_key: the normalized "<family> <version>" key of one model id or
 # display name, or "<family>" for a bare alias; prints nothing and returns 1
@@ -47,16 +47,16 @@ fm_sm_model_key() {  # <id-or-display-name>
   fi
 }
 
-# fm_sm_model_keys_match: whether two normalized keys name the same model. A
-# key with no version (a bare alias) matches on family alone; two versioned
-# keys must agree exactly, so sonnet 5 and sonnet 5.5 are different models.
-fm_sm_model_keys_match() {  # <key> <key>
-  local a=$1 b=$2
-  [ -n "$a" ] && [ -n "$b" ] || return 1
-  [ "$a" = "$b" ] && return 0
-  case "$a" in *' '*) ;; *) [ "$a" = "${b%% *}" ]; return ;; esac
-  case "$b" in *' '*) ;; *) [ "$b" = "${a%% *}" ]; return ;; esac
-  return 1
+# fm_sm_model_keys_match: whether an observed key satisfies the pin key. A pin
+# with no version (a bare alias) accepts any version of its family; a
+# versioned pin needs the exact key, so an observed bare alias, sonnet 5, and
+# sonnet 5.5 are all different from a sonnet 5.5 pin.
+fm_sm_model_keys_match() {  # <pin-key> <observed-key>
+  local pin=$1 observed=$2
+  [ -n "$pin" ] && [ -n "$observed" ] || return 1
+  [ "$pin" = "$observed" ] && return 0
+  case "$pin" in *' '*) return 1 ;; esac
+  [ "$pin" = "${observed%% *}" ]
 }
 
 # fm_sm_model_argv_model: the --model value from one process's argument line

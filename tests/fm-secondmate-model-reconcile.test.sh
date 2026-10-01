@@ -9,7 +9,8 @@
 # server on a private socket, with no harness and no credentials, and drives
 # the command end to end: --check over a registry of mates whose launch argv
 # and rendered footer are pushed apart on purpose, and --apply over a drifted
-# mate whose stand-in exits only on a typed /exit. The live Claude Code
+# mate whose stand-in exits only on a typed /exit, plus drifted mates the
+# repair must refuse: one mid-turn and one with pending composer text. The live Claude Code
 # counterpart is tests/fm-secondmate-model-reconcile-live-e2e.test.sh.
 set -u
 
@@ -39,11 +40,11 @@ key_is 'gpt-5.5' 'UNREADABLE'
 pass "pin ids and display names normalize to one family/version key, ignoring provider, context, and date suffixes"
 
 fm_sm_model_keys_match 'sonnet 5.5' 'sonnet 5.5' || fail "identical keys must match"
-fm_sm_model_keys_match 'sonnet' 'sonnet 5.5' || fail "a bare alias must match any version of its family"
-fm_sm_model_keys_match 'sonnet 5.5' 'sonnet' || fail "alias matching must be symmetric"
+fm_sm_model_keys_match 'sonnet' 'sonnet 5.5' || fail "a bare alias pin must accept any version of its family"
+! fm_sm_model_keys_match 'sonnet 5.5' 'sonnet' || fail "a versioned pin must not accept an observed bare alias"
 ! fm_sm_model_keys_match 'sonnet 5' 'sonnet 5.5' || fail "sonnet 5 and sonnet 5.5 are different models"
 ! fm_sm_model_keys_match 'sonnet' 'opus 5.5' || fail "an alias must not match another family"
-pass "key matching separates versions and lets a bare alias match its family"
+pass "key matching separates versions and lets only a bare alias pin accept its family"
 
 assert_equals 'us.anthropic.claude-sonnet-5-5[1m]' \
   "$(fm_sm_model_argv_model 'claude --model us.anthropic.claude-sonnet-5-5[1m] --effort xhigh')" \
@@ -113,9 +114,10 @@ export PATH
 
 # The stand-in is a real native process reached through a symlink named
 # claude, so the kernel's process table carries the name and argv a real
-# launch would. It exits only when a line reading /exit arrives on its tty.
-printf '%s\n' '#include <stdio.h>' '#include <string.h>' '#include <unistd.h>' \
-  'int main(void){char b[256];while(fgets(b,sizeof b,stdin)){b[strcspn(b,"\n")]=0;if(strcmp(b,"/exit")==0)return 0;}for(;;)sleep(1);}' \
+# launch would. It exits only when a line reading /exit arrives on its tty,
+# and appends every line it receives to $STANDIN_LOG.
+printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' '#include <string.h>' '#include <unistd.h>' \
+  'int main(void){char b[256];const char*p=getenv("STANDIN_LOG");while(fgets(b,sizeof b,stdin)){b[strcspn(b,"\n")]=0;if(p){FILE*f=fopen(p,"a");if(f){fprintf(f,"%s\n",b);fclose(f);}}if(strcmp(b,"/exit")==0)return 0;}for(;;)sleep(1);}' \
   > "$LAB/standin.c"
 "$CC_BIN" -o "$LAB/bin/standin" "$LAB/standin.c" 2>/dev/null || { echo "skip: could not build the claude stand-in"; exit 0; }
 ln -s "$LAB/bin/standin" "$LAB/bin/claude"
@@ -124,12 +126,13 @@ PIN='us.anthropic.claude-sonnet-5-5[1m]'
 HOME_DIR="$LAB/home"
 
 # screen <footer-model>: a Claude-shaped viewport whose status line names
-# <footer-model>, with a different model quoted in the conversation above.
+# <footer-model>, with a different model quoted in the conversation above and
+# the cursor parked in the composer, so typed input echoes there.
 screen_cmd() {  # <footer-model|-> -> printf command
   if [ "$1" = - ]; then
     printf "printf '%%s\\\\n' 'conversation mentions Opus 5.5'"
   else
-    printf "printf '%%s\\\\n' 'conversation mentions Haiku 4.5' '────────────────────' '❯ ' '────────────────────' '  🤖 %s ● high'" "$1"
+    printf "printf '%%s\\\\n' 'conversation mentions Haiku 4.5' '────────────────────' '❯ ' '────────────────────' '  🤖 %s ● high'; printf '\\\\033[3A\\\\033[2C'" "$1"
   fi
 }
 
@@ -140,7 +143,7 @@ launch() {
   shift 2
   local cmd args='' a
   for a in "$@"; do args="$args '$a'"; done
-  cmd="$(screen_cmd "$footer"); '$LAB/bin/claude'$args"
+  cmd="$(screen_cmd "$footer"); STANDIN_LOG='$LAB/$id.lines' '$LAB/bin/claude'$args"
   if tmux has-session -t "$SES" 2>/dev/null; then
     tmux new-window -d -t "$SES" -n "fm-$id" "$cmd"
   else
@@ -180,12 +183,20 @@ add_mate delta "claude $PIN"
 add_mate echo -
 add_mate foxtrot "claude $PIN" remote
 add_mate golf "codex gpt-5.5"
+add_mate hotel "claude default xhigh"
+add_mate india "claude $PIN"
+add_mate juliet "claude $PIN"
+add_mate kilo "claude $PIN"
 
 launch alpha 'Sonnet 5.5' --model "$PIN"
 launch bravo 'Opus 5.5 (1M context)'
 launch charlie 'Opus 5.5 (1M context)' --model "$PIN"
 launch delta - --model "$PIN"
 launch echo 'Opus 5.5'
+launch hotel 'Opus 5.5'
+launch india 'Opus 5.5'
+launch juliet 'Opus 5.5'
+launch kilo - --model sonnet
 
 # The stand-in's kernel name is its real file (standin on macOS), so liveness
 # is read through the backend's own agent classifier, which also reads argv0.
@@ -203,7 +214,7 @@ wait_alive() {  # <id>
   done
   return 1
 }
-for id in alpha bravo charlie delta echo; do
+for id in alpha bravo charlie delta echo hotel india juliet kilo; do
   wait_alive "$id" || fail "stand-in for $id never became the pane's foreground process"
 done
 
@@ -221,7 +232,9 @@ assert_contains "$out" "on-pin: delta - pin $PIN; live argv: --model $PIN (match
 assert_contains "$out" "unpinned: echo - its pin names no model" "a pin without a model is reported, not judged"
 assert_contains "$out" "skipped: foxtrot - remote mate" "a remote mate is skipped"
 assert_contains "$out" "skipped: golf - pinned harness is 'codex'" "a non-claude pin is skipped"
-assert_contains "$out" "summary: 7 checked, 2 on-pin, 2 drifted, 0 repaired, 0 failed, 2 skipped, 1 unpinned, 0 unknown" "check summary"
+assert_contains "$out" "unpinned: hotel - its pin names no model" "a 'default' model pin passes no --model, so it is unpinned, never drift"
+assert_contains "$out" "drifted: kilo - pin $PIN; live argv: --model sonnet (mismatch); footer: unreadable" "a bare alias launch does not satisfy a versioned pin"
+assert_contains "$out" "summary: 11 checked, 2 on-pin, 5 drifted, 0 repaired, 0 failed, 2 skipped, 2 unpinned, 0 unknown" "check summary"
 # Divergence guard: charlie's two signals genuinely disagree, so the case
 # cannot pass vacuously by losing one of them.
 case "$out" in *"charlie - pin $PIN; live argv: --model $PIN (match); footer: Opus 5.5 (mismatch)"*) ;; *) fail "charlie's signals were not driven apart" ;; esac
@@ -271,3 +284,27 @@ assert_contains "$(cat "$LAB/held.log")" "charlie lease=main lock=held" "each re
 out=$(FM_HOME="$HOME_DIR" "$ROOT/bin/fm-lease.sh" check bravo 2>&1) && fail "bravo must be unleased after the repair: $out"
 out=$(reconcile --check bravo charlie 2>&1) || fail "a repaired mate must check on-pin afterwards: $out"
 pass "--apply exits a drifted stand-in with a typed /exit, relaunches it on the pin, and leaves on-pin mates untouched"
+
+# A mid-turn mate and a mate with pending composer text are refused before any
+# input reaches them; the pending text survives to be submitted as typed.
+"$ROOT/bin/fm-busy-event.sh" arm "$HOME_DIR/state" india >/dev/null || fail "could not arm india's busy record"
+tmux send-keys -t "$SES:fm-juliet" -l 'draft steer'
+: > "$LAB/spawn.log"
+rc=0
+out=$(FM_SECONDMATE_MODEL_SPAWN="$LAB/bin/spawn-stub" FM_SECONDMATE_MODEL_CONFIRM_WAIT=2 FM_SECONDMATE_MODEL_EXIT_WAIT=2 \
+  reconcile --apply india juliet 2>&1) || rc=$?
+assert_equals 3 "$rc" "--apply exits 3 while a refused mate is still drifted"
+assert_contains "$out" "drifted: india - not repaired: the agent is mid-turn" "a busy tmux mate is refused"
+assert_contains "$out" "drifted: juliet - not repaired: its composer is 'pending', not proven empty" "pending composer text refuses the repair"
+assert_contains "$out" "summary: 2 checked, 0 on-pin, 2 drifted, 0 repaired, 0 failed" "refusal summary"
+agent_up india || fail "a mid-turn mate must keep running"
+agent_up juliet || fail "a mate with pending composer text must keep running"
+[ ! -s "$LAB/spawn.log" ] || fail "a refused mate must never be relaunched: $(cat "$LAB/spawn.log")"
+[ ! -e "$LAB/india.lines" ] || fail "nothing may be typed into a mid-turn mate: $(cat "$LAB/india.lines")"
+[ ! -e "$HOME_DIR/state/.secondmate-liveness-juliet.lock" ] || fail "a refused repair must release the liveness lock"
+out=$(FM_HOME="$HOME_DIR" "$ROOT/bin/fm-lease.sh" check juliet 2>&1) && fail "juliet must be unleased after the refusal: $out"
+tmux send-keys -t "$SES:fm-juliet" Enter
+i=0
+while [ ! -s "$LAB/juliet.lines" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+assert_equals 'draft steer' "$(cat "$LAB/juliet.lines" 2>/dev/null)" "the pending composer text is preserved intact"
+pass "--apply refuses a mid-turn mate and preserves pending composer text instead of clearing it"

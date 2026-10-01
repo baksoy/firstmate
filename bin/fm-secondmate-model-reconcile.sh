@@ -38,12 +38,14 @@
 # Report lines, one per mate, then one summary line:
 #   on-pin:    every readable signal matches the pin; left untouched.
 #   drifted:   a signal names another model; under --apply the line says why
-#              the repair was not attempted (lease, liveness episode, mid-turn).
+#              the repair was not attempted (lease, liveness episode, mid-turn,
+#              composer not proven empty).
 #   repaired:  relaunched and the live signals now match the pin.
 #   failed:    a repair step refused or the relaunch did not land on the pin.
 #   skipped:   not checkable here (remote, non-claude pin, endpoint not alive,
 #              unsupported backend).
-#   unpinned:  the pin names no model, so there is nothing to drift from.
+#   unpinned:  the pin names no model (or 'default', which fm-spawn passes as
+#              no --model), so there is nothing to drift from.
 #   unknown:   no signal was readable; no repair is attempted on no evidence.
 #
 # Repair (--apply), per drifted local mate on a tmux or herdr endpoint:
@@ -52,10 +54,12 @@
 #      instead of observing the deliberate exit as a death and relaunching it.
 #      A lease this actor already held is kept afterwards; one taken here is
 #      released.
-#   2. Refuse a mid-turn agent. Clear the composer with C-u, refuse if text
-#      is still pending, then type /exit and press Enter, once more if the
-#      agent is still up. bin/fm-control.sh relaunch is not used because its
-#      submit-confirmed exit refuses on current Claude Code under Herdr.
+#   2. Refuse a mid-turn agent, and refuse unless the composer is proven
+#      empty: pending text (an unsubmitted steer, a doorbell, or the captain's
+#      draft) is never cleared or typed onto. Then type /exit and press Enter,
+#      once more if the agent is still up. bin/fm-control.sh relaunch is not
+#      used because its submit-confirmed exit refuses on current Claude Code
+#      under Herdr.
 #   3. Once the agent has exited, close the leftover shell endpoint exactly as
 #      the liveness relaunch does, then relaunch through
 #      `bin/fm-spawn.sh <id> <home> --secondmate --harness <h> --model <m>
@@ -84,7 +88,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
-  sed -n '2,80{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,84{s/^# \{0,1\}//;p;}' "$0"
 }
 
 MODE=
@@ -132,6 +136,8 @@ export FM_HOME
 . "$SCRIPT_DIR/fm-secondmate-model-lib.sh"
 # shellcheck source=bin/fm-secondmate-liveness-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
 ACTOR=$(fm_lease_actor) || exit 2
@@ -292,21 +298,19 @@ repair_mate() {  # <id> <meta> <backend> <target> <harness> <pin-model> <pin-eff
     return 2
   fi
 
-  if [ "$(fm_backend_busy_state "$backend" "$target")" = busy ]; then
-    finish_repair "$id"
-    fm_sm_model_report_line drifted "$id" "not repaired: the agent is mid-turn; rerun when it is idle; $before"
-    return 2
-  fi
-  fm_backend_send_key "$backend" "$target" C-u >/dev/null 2>&1 || true
-  sleep 0.3
-  composer=$(fm_backend_composer_state "$backend" "$target")
-  case "$composer" in
-    pending|pending-unproven)
+  case "$(fm_busy_classify_meta "$meta" "$id" "$STATE")" in
+    busy*)
       finish_repair "$id"
-      fm_sm_model_report_line failed "$id" "the composer still holds text after C-u, so /exit was not typed; $before"
-      return 1
+      fm_sm_model_report_line drifted "$id" "not repaired: the agent is mid-turn; rerun when it is idle; $before"
+      return 2
       ;;
   esac
+  composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null) || composer=unknown
+  if [ "$composer" != empty ]; then
+    finish_repair "$id"
+    fm_sm_model_report_line drifted "$id" "not repaired: its composer is '${composer:-unknown}', not proven empty, so /exit was not typed; rerun once it is clear; $before"
+    return 2
+  fi
   if ! send_literal "$backend" "$target" /exit >/dev/null 2>&1; then
     finish_repair "$id"
     fm_sm_model_report_line failed "$id" "could not type /exit into its endpoint; $before"
@@ -394,7 +398,7 @@ for entry in "${MATES[@]+"${MATES[@]}"}"; do
     fm_sm_model_report_line skipped "$id" "pinned harness is '${harness:-unresolved}'; live model reading is verified for claude only"
     n_skipped=$((n_skipped + 1)); continue
   fi
-  if [ -z "$pin" ]; then
+  if [ -z "$pin" ] || [ "$pin" = default ]; then
     fm_sm_model_report_line unpinned "$id" "its pin names no model"
     n_unpinned=$((n_unpinned + 1)); continue
   fi

@@ -20,12 +20,13 @@ The mate cannot repair itself either when the pinned model is absent from Claude
 
 1. Run `FM_HOME=<this home> bin/fm-secondmate-model-reconcile.sh --check` from the home whose mates you supervise.
 2. Read one line per mate.
-   `on-pin`, `skipped`, and `unpinned` need nothing.
+   `on-pin`, `skipped`, and `unpinned` need nothing; a pin whose model is `default` launches with no `--model`, so it reads `unpinned`.
    `unknown` means no live signal was readable, so inspect that mate's endpoint by hand before acting; never repair on no evidence.
    `drifted` names which signal disagreed with the pin.
 3. When any mate is `drifted`, run the same command with `--apply`, restricted to those ids when others are mid-task.
    A `repaired` line proves the relaunched session is live on the pin.
-   A `drifted ... not repaired:` line names why it stood down - another actor's lease, an open liveness episode, or a mid-turn agent - so rerun after that clears.
+   A `drifted ... not repaired:` line names why it stood down - another actor's lease, an open liveness episode, a mid-turn agent, or a composer not proven empty - so rerun after that clears.
+   Pending composer text (an unsubmitted steer, a doorbell, or the captain's draft) is never cleared; the repair refuses instead, so submit or clear that text deliberately before rerunning.
    A `failed` line names the step that refused; the mate is either still running unchanged or exited and left to the liveness sweep, which relaunches on the pin.
 4. Rerun `--check` until every mate reads `on-pin`, then reconcile each repaired mate's open work the way any secondmate relaunch is reconciled under `secondmate-provisioning`.
 
