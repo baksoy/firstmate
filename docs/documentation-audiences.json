@@ -249,6 +249,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/secondmate-model-drift/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/secondmate-provisioning/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -558,10 +562,6 @@
     },
     {
       "path": ".agents/skills/away-quiet-supervision/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": ".agents/skills/operational-home-layout/SKILL.md",
       "audience": "agent-runtime"
     },
     {
