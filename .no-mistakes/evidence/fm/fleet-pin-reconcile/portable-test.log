@@ -1,0 +1,10 @@
+ok - pin ids and display names normalize to one family/version key, ignoring provider, context, and date suffixes
+ok - key matching separates versions and lets only a bare alias pin accept its family
+ok - the launch argv yields the --model token verbatim, or absent
+ok - the footer reading is bounded to the status-line region
+ok - the verdict treats any positive off-pin signal as drift and nothing readable as unknown
+ok - report and summary lines keep their documented shape
+ok - --check reads argv and footer from real processes and reports each mate
+ok - an id filter restricts the pass to registered mates
+ok - --apply exits a drifted stand-in with a typed /exit, relaunches it on the pin, and leaves on-pin mates untouched
+ok - --apply refuses a mid-turn mate and preserves pending composer text instead of clearing it

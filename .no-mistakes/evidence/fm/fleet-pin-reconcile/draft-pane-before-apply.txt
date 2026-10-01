@@ -1,0 +1,45 @@
+
+ ▐▛███▛█   Claude Code v2.1.286
+▝▜██████▀  Opus 5.5 (1M context) with high effort · Amazon Bedrock
+ ▝▝   ▝▝   @agents/adlc-orchestrator.md · /private/var/folders/n_/c9x2fd4x0_56750gb8vdr2yw0000gn/T/fm-adv.omiHxR/draft-home
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                             tmux detected · scroll with PgUp/PgDn · or add 'set -g mouse on' to ~/.tmux.conf for wheel scroll
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ LAB-DRAFT captain unsent steer keep me
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to keep future transcripts
+  Opus 5.5 (1M context)
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

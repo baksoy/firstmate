@@ -1,0 +1,67 @@
+## Phase 1: --check (Claude Code 2.1.286 (Claude Code))
+drifted: busy - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+drifted: draft - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+drifted: alias - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model sonnet (mismatch); footer: Sonnet 5 (mismatch)
+drifted: aliasnofoot - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model sonnet (mismatch); footer: unreadable
+on-pin: aliaspin - pin sonnet; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+unpinned: dflt - its pin names no model
+summary: 6 checked, 1 on-pin, 4 drifted, 0 repaired, 0 failed, 0 skipped, 1 unpinned, 0 unknown
+exit=3
+PASS - check exits 3 when drift exists
+PASS - versioned pin: alias-launched session (--model sonnet, footer Sonnet 5) is drifted
+PASS - versioned pin: alias-launched session with unreadable footer is drifted, not a silent pass
+PASS - alias pin 'sonnet' accepts a session running Sonnet 5.5
+PASS - pin 'claude default xhigh' reports unpinned, never drifted
+PASS - bare (resurrect-like) session is drifted from live evidence
+busy record after submit: v1 gen=g1790871282.70365.16647 seq=2 state=busy source=claude-hook event=user-prompt-submit ts=1790871294
+## Phase 2: --apply while busy is mid-turn and draft holds unsent text
+drifted: busy - not repaired: the agent is mid-turn; rerun when it is idle; pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+drifted: draft - not repaired: its composer is 'pending', not proven empty, so /exit was not typed; rerun once it is clear; pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+repaired: alias - was: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model sonnet (mismatch); footer: Sonnet 5 (mismatch); now: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+repaired: aliasnofoot - was: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model sonnet (mismatch); footer: unreadable; now: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: aliaspin - pin sonnet; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+unpinned: dflt - its pin names no model
+summary: 6 checked, 1 on-pin, 2 drifted, 2 repaired, 0 failed, 0 skipped, 1 unpinned, 0 unknown
+exit=3
+spawn.log:
+alias /private/var/folders/n_/c9x2fd4x0_56750gb8vdr2yw0000gn/T/fm-adv.omiHxR/alias-home --secondmate --harness claude --model us.anthropic.claude-sonnet-5-5[1m]
+aliasnofoot /private/var/folders/n_/c9x2fd4x0_56750gb8vdr2yw0000gn/T/fm-adv.omiHxR/aliasnofoot-home --secondmate --harness claude --model us.anthropic.claude-sonnet-5-5[1m]
+PASS - apply exits 3 while refused mates remain drifted
+PASS - mid-turn real agent is refused (busy guard on tmux)
+PASS - pending composer text refuses the repair
+PASS - alias-launched session repaired onto versioned pin
+PASS - alias-launched no-footer session repaired onto versioned pin
+PASS - relaunch got the pin verbatim (alias)
+PASS - busy/draft/on-pin/unpinned mates never relaunched
+PASS - draft session kept its process
+PASS - busy session kept its process
+PASS - on-pin and unpinned sessions kept their processes
+PASS - the captain's draft text is still in the composer after --apply
+## Phase 3: turn ends, captain clears draft, rerun --apply
+busy record after turn: v1 gen=g1790871282.70365.16647 seq=3 state=idle source=claude-hook event=stop ts=1790871378
+repaired: busy - was: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch); now: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+repaired: draft - was: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch); now: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: alias - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: aliasnofoot - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: aliaspin - pin sonnet; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+unpinned: dflt - its pin names no model
+summary: 6 checked, 3 on-pin, 0 drifted, 2 repaired, 0 failed, 0 skipped, 1 unpinned, 0 unknown
+exit=0
+spawn.log:
+busy /private/var/folders/n_/c9x2fd4x0_56750gb8vdr2yw0000gn/T/fm-adv.omiHxR/busy-home --secondmate --harness claude --model us.anthropic.claude-sonnet-5-5[1m]
+draft /private/var/folders/n_/c9x2fd4x0_56750gb8vdr2yw0000gn/T/fm-adv.omiHxR/draft-home --secondmate --harness claude --model us.anthropic.claude-sonnet-5-5[1m]
+PASS - rerun exits 0 once nothing is left drifted
+PASS - busy mate repaired after its turn ended
+PASS - draft mate repaired once composer is clear
+PASS - previously repaired alias mate now reads on-pin (Sonnet 5.5)
+## Final --check
+on-pin: busy - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: draft - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: alias - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: aliasnofoot - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+on-pin: aliaspin - pin sonnet; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+unpinned: dflt - its pin names no model
+summary: 6 checked, 5 on-pin, 0 drifted, 0 repaired, 0 failed, 0 skipped, 1 unpinned, 0 unknown
+exit=0
+PASS - final --check exits 0
+RESULT: 22 passed, 0 failed

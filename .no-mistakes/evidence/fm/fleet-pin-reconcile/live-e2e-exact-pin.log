@@ -1,0 +1,9 @@
+# Claude Code (2.1.286 (Claude Code)) launches Opus 5.5 by default here; pinning the lab mates to us.anthropic.claude-sonnet-5-5[1m]
+# on-pin: onpin - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+# drifted: drift - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch)
+# summary: 2 checked, 1 on-pin, 1 drifted, 0 repaired, 0 failed, 0 skipped, 0 unpinned, 0 unknown
+ok - live --check: Claude Code (2.1.286 (Claude Code)) argv and footer readings separate the pinned and the bare session
+# on-pin: onpin - pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+# repaired: drift - was: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: launched without --model; footer: Opus 5.5 (mismatch); now: pin us.anthropic.claude-sonnet-5-5[1m]; live argv: --model us.anthropic.claude-sonnet-5-5[1m] (match); footer: Sonnet 5.5 (match)
+# summary: 2 checked, 1 on-pin, 0 drifted, 1 repaired, 0 failed, 0 skipped, 0 unpinned, 0 unknown
+ok - live --apply: Claude Code (2.1.286 (Claude Code)) exits on a typed /exit and the relaunch is proven on the pin
