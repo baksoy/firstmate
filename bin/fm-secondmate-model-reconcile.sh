@@ -2,12 +2,15 @@
 # Reconcile every registered second mate's actually-running model against its
 # recorded pin, and with --apply relaunch any mate that drifted onto the pin.
 #
-# Usage: fm-secondmate-model-reconcile.sh --check|--apply [<secondmate-id>...] [--help]
+# Usage: fm-secondmate-model-reconcile.sh --check|--apply [--seat] [<secondmate-id>...] [--help]
+#        fm-secondmate-model-reconcile.sh --seat
 #
 #   --check   report only; touches nothing.
 #   --apply   report, then relaunch each drifted mate onto its pin.
 #   <id>...   restrict the pass to these registered mates (default: every
 #             mate in data/secondmates.md).
+#   --seat    also check the command seat (the live primary session) against
+#             its intended default; alone, check only the seat (no FM_HOME).
 #
 # Why this exists: a Herdr restart resurrects each Claude Code agent from its
 # saved session but drops the launch flags, so a mate pinned to one model
@@ -74,7 +77,23 @@
 # the two relaunches stand down, and the sweep's own relaunch re-resolves the
 # same pin. Reconcile the mate's current state and rerun --check.
 #
+# Command seat (--seat): the primary cannot be relaunched like a mate, so this
+# only detects and flags. On every pi launch, /new, /resume, or restart it
+# comes up on ~/.pi/agent/settings.json defaultModel (plus defaultProvider
+# when present, and modelThinkingLevels[<provider>/<model>] falling back to
+# defaultThinkingLevel for the thinking level). Live = PI_MODEL (plus
+# PI_PROVIDER and PI_REASONING_LEVEL when set) as exposed to pi's bash tool,
+# so run it from the seat's own shell. One line, `seat`-labelled:
+#   on-pin:    live model matches the intended default.
+#   drifted:   live model (or provider/thinking level) differs; the line names
+#              the fix: select the default with /model, or restart pi.
+#   unknown:   settings.json or a needed field is missing or unreadable, or
+#              PI_MODEL is unset (not run from the seat); nothing is inferred.
+# Nothing is relaunched and ~/.pi is never written. A drifted or unknown seat
+# exits 3 like a drifted mate.
+#
 # Environment knobs:
+#   FM_PI_SETTINGS                    pi settings file (~/.pi/agent/settings.json); a test seam
 #   FM_SECONDMATE_MODEL_EXIT_WAIT     seconds to wait for /exit to land (30)
 #   FM_SECONDMATE_MODEL_CONFIRM_WAIT  seconds to wait for the relaunch to show the pin (120)
 #   FM_SECONDMATE_MODEL_POLL          seconds between live re-reads (2)
@@ -88,16 +107,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
-  sed -n '2,84{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,103{s/^# \{0,1\}//;p;}' "$0"
 }
 
 MODE=
+SEAT=0
 IDS=()
 for arg in "$@"; do
   case "$arg" in
     -h|--help) usage; exit 0 ;;
     --check) MODE=check ;;
     --apply) MODE=apply ;;
+    --seat) SEAT=1 ;;
     -*) echo "error: unexpected argument '$arg'" >&2; usage >&2; exit 2 ;;
     *)
       id=${arg#fm-}
@@ -106,7 +127,49 @@ for arg in "$@"; do
       ;;
   esac
 done
-[ -n "$MODE" ] || { usage >&2; exit 2; }
+[ -n "$MODE" ] || [ "$SEAT" = 1 ] || { usage >&2; exit 2; }
+[ -n "$MODE" ] || [ "${#IDS[@]}" -eq 0 ] || { echo "error: mate ids need --check or --apply" >&2; exit 2; }
+
+# Command seat: live PI_* environment against the pi settings default.
+# Prints the seat line and returns 0 only when the seat is on its default.
+check_seat() {
+  local settings=${FM_PI_SETTINGS:-$HOME/.pi/agent/settings.json}
+  local model provider thinking want_model want_provider want_thinking fix
+  local live_desc want_desc
+  model=${PI_MODEL:-} provider=${PI_PROVIDER:-} thinking=${PI_REASONING_LEVEL:-}
+  if [ -z "$model" ]; then
+    fm_sm_model_report_line unknown seat "PI_MODEL is unset; run this from the command seat's own pi shell"
+    return 1
+  fi
+  if [ ! -f "$settings" ] || ! want_model=$(jq -er '.defaultModel | select(type == "string" and . != "")' "$settings" 2>/dev/null); then
+    fm_sm_model_report_line unknown seat "live ${provider:+$provider/}$model; no readable defaultModel in $settings"
+    return 1
+  fi
+  want_provider=$(jq -r '.defaultProvider // empty | strings' "$settings" 2>/dev/null) || want_provider=
+  want_thinking=$(jq -r --arg k "${want_provider:+$want_provider/}$want_model" \
+    '(.modelThinkingLevels[$k] // .defaultThinkingLevel // empty) | strings' "$settings" 2>/dev/null) || want_thinking=
+  live_desc="${provider:+$provider/}$model${thinking:+ ($thinking)}"
+  want_desc="${want_provider:+$want_provider/}$want_model${want_thinking:+ ($want_thinking)}"
+  if [ "$model" = "$want_model" ] \
+    && { [ -z "$want_provider" ] || [ -z "$provider" ] || [ "$provider" = "$want_provider" ]; } \
+    && { [ -z "$want_thinking" ] || [ -z "$thinking" ] || [ "$thinking" = "$want_thinking" ]; }; then
+    fm_sm_model_report_line on-pin seat "live $live_desc; default $want_desc"
+    return 0
+  fi
+  fix="select the default with /model"
+  [ -z "$want_thinking" ] || [ "$thinking" = "$want_thinking" ] || fix="$fix and set thinking $want_thinking"
+  fix="$fix, or restart pi"
+  fm_sm_model_report_line drifted seat "live $live_desc; default $want_desc; fix: $fix (the seat is never relaunched here)"
+  return 1
+}
+
+# shellcheck source=bin/fm-secondmate-model-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-model-lib.sh"
+SEAT_BAD=0
+if [ "$SEAT" = 1 ]; then
+  check_seat || SEAT_BAD=1
+  [ -n "$MODE" ] || exit $((SEAT_BAD * 3))
+fi
 
 if [ -z "${FM_HOME:-}" ]; then
   echo "error: FM_HOME is not set; fm-secondmate-model-reconcile refuses to resolve second mates without an explicit firstmate home" >&2
@@ -132,8 +195,6 @@ done
 export FM_HOME
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
-# shellcheck source=bin/fm-secondmate-model-lib.sh
-. "$SCRIPT_DIR/fm-secondmate-model-lib.sh"
 # shellcheck source=bin/fm-secondmate-liveness-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
@@ -447,5 +508,5 @@ for entry in "${MATES[@]+"${MATES[@]}"}"; do
 done
 
 fm_sm_model_summary_line "$checked" "$n_on" "$n_drift" "$n_repaired" "$n_failed" "$n_skipped" "$n_unpinned" "$n_unknown"
-[ $((n_drift + n_failed + n_unknown)) -eq 0 ] || exit 3
+[ $((n_drift + n_failed + n_unknown + SEAT_BAD)) -eq 0 ] || exit 3
 exit 0

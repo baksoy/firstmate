@@ -4,6 +4,7 @@ description: >-
   Agent-only playbook for second mates running a model other than their recorded pin.
   Load after any Herdr restart, upgrade, or session resurrection while second mates are registered, and whenever a mate's live model is suspected to differ from its pin, for example a mate reporting itself on the harness default or the captain noticing a mate on the wrong model.
   Reconciles every local Claude Code mate's live model against its pin and relaunches drifted mates onto it.
+  Also load after any pi restart, `/new`, or `/resume` of the command seat itself, to check the seat's live model against its default.
 user-invocable: false
 metadata:
   internal: true
@@ -29,6 +30,13 @@ The mate cannot repair itself either when the pinned model is absent from Claude
    Pending composer text (an unsubmitted steer, a doorbell, or the captain's draft) is never cleared; the repair refuses instead, so submit or clear that text deliberately before rerunning.
    A `failed` line names the step that refused; the mate is either still running unchanged or exited and left to the liveness sweep, which relaunches on the pin.
 4. Rerun `--check` until every mate reads `on-pin`, then reconcile each repaired mate's open work the way any secondmate relaunch is reconciled under `secondmate-provisioning`.
+
+## Command seat
+
+The command seat (the live primary) comes up on `~/.pi/agent/settings.json` `defaultModel` after every pi launch, `/new`, `/resume`, or restart.
+Run `bin/fm-secondmate-model-reconcile.sh --seat` from the seat's own shell to compare its `PI_MODEL` (plus provider and thinking level when exported) with that default; add `--seat` to `--check` to get the seat line alongside the mates.
+`on-pin` needs nothing, `unknown` means settings or `PI_MODEL` was unreadable so verify by hand, and `drifted` prints the fix: select the default with `/model`, or restart pi.
+The seat is detect-and-flag only: this command never relaunches it and never writes `~/.pi`, so surface a drifted seat to whoever can restart it.
 
 ## Boundaries
 

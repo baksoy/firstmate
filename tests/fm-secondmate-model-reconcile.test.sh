@@ -89,6 +89,56 @@ assert_equals 'summary: 3 checked, 1 on-pin, 1 drifted, 0 repaired, 0 failed, 1 
   "$(fm_sm_model_summary_line 3 1 1 0 0 1 0 0)" "summary line shape"
 pass "report and summary lines keep their documented shape"
 
+# --- command seat (--seat) ----------------------------------------------------
+# A fake pi settings file and PI_* values; no FM_HOME, tmux, or harness needed.
+
+SEAT_DIR=$(fm_test_tmproot fm-model-reconcile-seat) || fail "could not create a temp root"
+trap fm_test_cleanup EXIT
+cat > "$SEAT_DIR/settings.json" <<'JSON'
+{"defaultProvider":"sf-gateway","defaultModel":"claude-opus-5-5","defaultThinkingLevel":"low",
+ "modelThinkingLevels":{"sf-gateway/claude-opus-5-5":"high"}}
+JSON
+seat() {  # [VAR=val...] -> runs the script with only the given PI_* values set
+  env -u FM_HOME -u PI_MODEL -u PI_PROVIDER -u PI_REASONING_LEVEL FM_PI_SETTINGS="$SEAT_DIR/settings.json" "$@" \
+    "$ROOT/bin/fm-secondmate-model-reconcile.sh" --seat 2>&1
+}
+
+rc=0
+out=$(seat PI_MODEL=claude-opus-5-5 PI_PROVIDER=sf-gateway PI_REASONING_LEVEL=high) || rc=$?
+assert_equals 0 "$rc" "a seat on its default exits 0"
+assert_equals 'on-pin: seat - live sf-gateway/claude-opus-5-5 (high); default sf-gateway/claude-opus-5-5 (high)' "$out" "seat match line"
+
+rc=0
+out=$(seat PI_MODEL=grok-4.6 PI_PROVIDER=sf-gateway PI_REASONING_LEVEL=off) || rc=$?
+assert_equals 3 "$rc" "a drifted seat exits 3"
+assert_contains "$out" "drifted: seat - live sf-gateway/grok-4.6 (off); default sf-gateway/claude-opus-5-5 (high); fix: select the default with /model and set thinking high, or restart pi" "seat model drift names the fix"
+
+rc=0
+out=$(seat PI_MODEL=claude-opus-5-5 PI_PROVIDER=sf-gateway PI_REASONING_LEVEL=low) || rc=$?
+assert_equals 3 "$rc" "a thinking-level drift exits 3"
+assert_contains "$out" "drifted: seat - live sf-gateway/claude-opus-5-5 (low)" "seat thinking drift"
+
+rc=0
+out=$(seat PI_MODEL=claude-opus-5-5) || rc=$?
+assert_equals 0 "$rc" "provider and thinking unset in the environment are not drift"
+
+rc=0
+out=$(seat) || rc=$?
+assert_equals 3 "$rc" "no PI_MODEL exits 3"
+assert_contains "$out" "unknown: seat - PI_MODEL is unset" "unset PI_MODEL is unknown, not a crash"
+
+rc=0
+out=$(seat PI_MODEL=claude-opus-5-5 FM_PI_SETTINGS="$SEAT_DIR/missing.json") || rc=$?
+assert_equals 3 "$rc" "missing settings exits 3"
+assert_contains "$out" "unknown: seat - live claude-opus-5-5; no readable defaultModel" "missing settings is unknown"
+printf '{"defaultThinkingLevel":"low"}' > "$SEAT_DIR/nomodel.json"
+out=$(seat PI_MODEL=claude-opus-5-5 FM_PI_SETTINGS="$SEAT_DIR/nomodel.json") || true
+assert_contains "$out" "unknown: seat - live claude-opus-5-5; no readable defaultModel" "settings without defaultModel is unknown"
+printf 'not json' > "$SEAT_DIR/bad.json"
+out=$(seat PI_MODEL=claude-opus-5-5 FM_PI_SETTINGS="$SEAT_DIR/bad.json") || true
+assert_contains "$out" "unknown: seat - " "unparseable settings is unknown"
+pass "--seat compares PI_MODEL (and provider/thinking when set) to the pi settings default and reports match, drift, or unknown"
+
 # --- real processes in a private tmux server --------------------------------
 
 command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found"; exit 0; }
