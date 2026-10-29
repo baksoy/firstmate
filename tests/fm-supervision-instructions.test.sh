@@ -58,7 +58,7 @@ test_supervision_host_protocol_on_every_arm_owner() {
   home="$TMP_ROOT/host-owners-home"
   config="$TMP_ROOT/host-owners-config"
   mkdir -p "$home/state" "$config"
-  for harness in claude cursor opencode omp grok codex; do
+  for harness in claude cursor agy opencode omp grok codex; do
     : > "$config/supervision-host-off"
     plain=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness "$harness")
     assert_not_contains "$plain" "Supervision host" "$harness: a home opted out by config/supervision-host-off rendered the host protocol"
@@ -184,6 +184,34 @@ test_repair_lines() {
   pass "renderer repair-line mode is harness-aware and honors conditional state"
 }
 
+test_omp_restart_guidance_depends_on_home_vs_checkout() {
+  local home out
+  home="$TMP_ROOT/omp-other-home"
+  mkdir -p "$home/state"
+
+  # Home is not the firstmate checkout: relaunch through the launcher.
+  out=$(FM_HOME="$home" "$RENDER" --harness omp --repair-line)
+  # shellcheck disable=SC2016  # backticks are literal text
+  assert_contains "$out" 'relaunch through `fm <project>`' "omp repair line must direct a non-checkout home to the fm launcher"
+  assert_contains "$out" "a bare omp or /resume from the firstmate checkout does not register the extensions for this home" "omp repair line omits the bare omp warning"
+  assert_not_contains "$out" "restart omp inside this home" "omp repair line still tells a non-checkout home to restart omp inside it"
+  out=$(FM_HOME="$home" "$RENDER" --harness omp)
+  # shellcheck disable=SC2016  # backticks are literal text
+  assert_contains "$out" 'exit omp and relaunch through `fm <project>`, which sets FM_HOME and --cwd' "omp protocol must direct a non-checkout home to the fm launcher"
+  assert_contains "$out" "a bare omp or /resume from the firstmate checkout does not register the extensions for this home" "omp protocol omits the bare omp warning"
+  assert_not_contains "$out" "restart omp inside this home" "omp protocol still tells a non-checkout home to restart omp inside it"
+
+  # Home is the checkout itself: today's text.
+  out=$(FM_HOME="$ROOT" "$RENDER" --harness omp --repair-line)
+  assert_contains "$out" "restart omp inside this home" "omp repair line lost today's wording for the checkout home"
+  assert_not_contains "$out" "fm <project>" "omp repair line named the launcher for the checkout home"
+  out=$(env -u FM_HOME "$RENDER" --harness omp)
+  assert_contains "$out" "restart omp inside this home; pass \`-e " "omp protocol lost today's wording for the checkout home"
+  assert_contains "$out" "restart omp inside this home if the extensions are not loaded" "omp protocol repair step lost today's wording for the checkout home"
+  assert_not_contains "$out" "fm <project>" "omp protocol named the launcher for the checkout home"
+  pass "omp restart guidance names the fm launcher only when the home is not the checkout"
+}
+
 test_cross_harness_ordinary_continuation_and_repair_matrix() {
   local ordinary out
 
@@ -224,6 +252,16 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
   assert_contains "$out" "watcher supervision needs Stop-owned automatic recovery" "claude recovery line lost its neutral automatic-recovery guidance"
   assert_not_contains "$out" "is broken" "claude recovery line claimed failure before verification"
   assert_not_contains "$out" "bin/fm-watch-arm.sh" "claude recovery line must not create a repeatable manual arm loop"
+
+  out=$("$RENDER" --harness agy)
+  assert_contains "$out" "primary harness: agy" "agy heading missing"
+  assert_contains "$out" "Mode: Antigravity Stop-hook-owned supervision." "agy mode line missing"
+  assert_contains "$out" "bin/fm-turnend-guard-agy.sh" "agy block lost the Stop-hook park script name"
+  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
+  assert_contains "$ordinary" "bin/fm-turnend-guard-agy.sh" "agy ordinary-wake line lost the Stop-hook park script name"
+  assert_not_contains "$ordinary" "bin/fm-watch-arm.sh" "agy ordinary-wake line must not call the manual arm"
+  out=$("$RENDER" --harness agy --repair-line)
+  assert_contains "$out" "Stop-hook park" "agy recovery line lost its Stop-hook park guidance"
 
   out=$("$RENDER" --harness grok)
   ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
@@ -311,6 +349,7 @@ test_unknown_fallback
 test_conditional_stanzas
 test_quiet_mode_stanzas
 test_repair_lines
+test_omp_restart_guidance_depends_on_home_vs_checkout
 test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol
 test_grok_is_background_notify
