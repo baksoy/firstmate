@@ -22,7 +22,7 @@
 # Why a plain wake append rather than a registered process-to-event source:
 # a procevent source (bin/fm-procevent.sh) models a long-polling BLOCKING
 # CHILD PROCESS that a live watcher arms once and keeps supervising across
-# cycles (see bin/fm-procevent-agentmail.sh) - the wrong shape for a script
+# cycles - the wrong shape for a script
 # that runs to completion once a day and must work with no live session at
 # all for the common case. The watcher's own custom-check pattern
 # (bin/fm-check-register.sh, state/<id>.check.sh: silent unless actionable,
@@ -31,7 +31,7 @@
 # neither of which fits a task-independent, once-a-day, OS-triggered check.
 # So this script keeps that check.sh silent-unless-actionable shape internally,
 # but reports the actionable case by calling fm_wake_append directly - the same
-# durable primitive bin/fm-procevent-agentmail.sh's self-announcing autohandle
+# durable primitive a self-announcing procevent autohandle
 # uses to publish a plain fact with no registration lifecycle. Both the
 # watcher's live reconcile and the session-start digest already drain that one
 # queue, so this adds no second notification channel.
