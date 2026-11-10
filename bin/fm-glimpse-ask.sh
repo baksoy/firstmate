@@ -1,29 +1,46 @@
 #!/usr/bin/env bash
-# fm-glimpse-ask.sh - OPT-IN, experimental click-to-answer decision popup (glimpseui).
+# fm-glimpse-ask.sh - OPT-IN click-to-answer DECISION ENTRY POINT (glimpseui).
 #
 # A small native window (WKWebView, via the glimpseui npm package) with a prompt
-# and one button per option. The clicked option is printed on stdout and the
-# exit code says what happened, so a caller can branch on it. This is the
-# opposite of a lavish page: a quick "answer if needed" prompt. Pop it ONLY when
-# the turn really needs a decision; when nothing is needed, do not call it.
-# It is a local trial: nothing in the supervision or turn-end flow calls it.
+# and one button per option. The clicked option is returned to the caller and the
+# exit code says what happened, so firstmate can branch on it. It is the opposite
+# of a lavish page: a quick "answer if needed" prompt. Call it ONLY at a moment
+# the turn really needs the captain's decision; when nothing is needed, do not
+# call it. Nothing in the supervision or turn-end flow calls it - firstmate (the
+# model) invokes it deliberately.
+#
+# RECOMMENDED CALL (machine-read path is --json; its keys are stable):
+#   ans=$(bin/fm-glimpse-ask.sh --json --timeout 120 "Merge PR #12?" "Yes" "No" "Not now"); rc=$?
+#   if [ "$rc" -eq 0 ]; then
+#     pick=$(printf '%s' "$ans" | jq -r .answer)    # the captain's reply, the exact clicked label
+#   else
+#     : # ANY non-zero exit (off, muted, dismissed, timeout, unavailable, usage):
+#       # no answer was given - ask the same question in plain text instead.
+#   fi
+# Never treat a non-zero exit as a pick, and never infer an answer from a dismissed
+# or timed-out window. Plain mode (no --json) prints just the chosen label on
+# stdout for exit 0 and nothing otherwise.
 #
 # Usage:
 #   fm-glimpse-ask.sh [--title T] [--timeout SEC] [--position CORNER] [--x N --y N]
 #                     [--primary N] [--json] [--] <prompt> <option> [<option>...]
 #   fm-glimpse-ask.sh --demo        sample "Merge PR? [Yes] [No] [Not now]"
 #   fm-glimpse-ask.sh --status      print whether the popup is enabled/muted/installed
-# Two to six options. Keys 1-9 pick an option, Esc dismisses. --primary N
-# highlights option N (default 1). --timeout 0 waits forever (default 120).
+# A prompt (any text, newlines allowed) and two to five distinct, non-empty
+# options. Keys 1-5 pick an option, Esc dismisses. --primary N highlights option N
+# (default 1). --timeout SEC waits that long (0 = forever); default 120, overridable
+# per call or via FM_GLIMPSE_ASK_TIMEOUT. A long prompt scrolls inside the window.
 #
-# Exit codes:
+# Exit codes (the contract; branch on these):
 #   0   answered      the chosen option is the only stdout line
-#   10  off           popup disabled or muted; no window was opened, no stdout
+#   10  off           popup disabled or muted; no window was opened
 #   11  dismissed     window closed without an answer; NOT a pick
 #   12  timeout       no click within --timeout; window closed
-#   13  unavailable   glimpseui missing or its native binary cannot run
-#   2   usage
-# --json prints {"outcome":"answered|dismissed|timeout","answer":"..."} instead.
+#   13  unavailable   node/glimpseui missing or its native binary cannot run
+#   2   usage         bad arguments (nothing is printed to stdout)
+# --json prints exactly one line on stdout for every outcome except usage:
+#   {"outcome":"answered|off|muted|dismissed|timeout|unavailable","answer":"<label>"|null}
+# "answer" is non-null only for outcome "answered" (exit 0). Diagnostics go to stderr.
 #
 # Enable (default OFF - an explicit opt-in per call or per home):
 #   FM_GLIMPSE_ASK=1                    for one command, or
@@ -47,7 +64,7 @@
 # $FM_HOME/data/glimpse-ask/node_modules/glimpseui, then the global npm root.
 #
 # Environment: FM_HOME (default: this checkout), FM_GLIMPSE_ASK, FM_GLIMPSE_ASK_MUTE,
-# FM_GLIMPSE_MODULE.
+# FM_GLIMPSE_ASK_TIMEOUT, FM_GLIMPSE_MODULE.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +73,19 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+
+JSON=0
+for a in "$@"; do
+  [ "$a" = "--" ] && break
+  [ "$a" = "--json" ] && JSON=1
+done
+
+# bail <exit> <outcome> <stderr message>: stop before the window opens, honoring --json.
+bail() {
+  [ "$JSON" -eq 1 ] && printf '{"outcome":"%s","answer":null}\n' "$2"
+  echo "fm-glimpse-ask: $3" >&2
+  exit "$1"
+}
 
 truthy() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1|on|true|yes) return 0 ;; *) return 1 ;; esac; }
 
@@ -94,17 +124,16 @@ case "${1:-}" in
 esac
 
 reason=$(enabled_reason)
-case "$reason" in off*) echo "fm-glimpse-ask: popup is $reason; set FM_GLIMPSE_ASK=1 to try it" >&2; exit 10 ;; esac
+case "$reason" in off*) bail 10 off "popup is $reason; set FM_GLIMPSE_ASK=1 to try it" ;; esac
 if mute=$(muted_reason); then
-  echo "fm-glimpse-ask: popup is muted ($mute); no window opened" >&2
-  exit 10
+  bail 10 muted "popup is muted ($mute); no window opened"
 fi
 
-command -v node >/dev/null 2>&1 || { echo "error: node is required" >&2; exit 13; }
+command -v node >/dev/null 2>&1 || bail 13 unavailable "node is required"
+
 if module=$(resolve_module); then
   FM_GLIMPSE_MODULE="$module"; export FM_GLIMPSE_MODULE
 else
-  echo "error: glimpseui not found; see the install notes in $0" >&2
-  exit 13
+  bail 13 unavailable "glimpseui not found; see the install notes in $0"
 fi
 exec node "$SCRIPT_DIR/fm-glimpse-ask.mjs" "$@"

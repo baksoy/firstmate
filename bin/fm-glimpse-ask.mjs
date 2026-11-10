@@ -5,6 +5,8 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
+const DEFAULT_TIMEOUT = 120;
+const MAX_HEIGHT = 420;
 const EXIT = { answered: 0, usage: 2, disabled: 10, dismissed: 11, timeout: 12, unavailable: 13 };
 const CORNERS = ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'center'];
 
@@ -16,7 +18,8 @@ function usage(msg) {
 }
 
 function parse(argv) {
-  const o = { title: 'Firstmate', timeout: 120, position: 'bottom-right', primary: 1, json: false, rest: [] };
+  const envT = process.env.FM_GLIMPSE_ASK_TIMEOUT;
+  const o = { title: 'Firstmate', timeout: /^\d+$/.test(envT ?? '') ? Number(envT) : DEFAULT_TIMEOUT, position: 'bottom-right', primary: 1, json: false, rest: [] };
   const num = (flag, v) => {
     if (v === undefined || !/^-?\d+$/.test(v)) usage(`${flag} needs an integer`);
     return Number(v);
@@ -38,9 +41,12 @@ function parse(argv) {
   if (o.demo && o.rest.length === 0) o.rest = ['Merge PR?', 'Yes', 'No', 'Not now'];
   if (!CORNERS.includes(o.position)) usage(`--position must be one of ${CORNERS.join(', ')}`);
   if (o.rest.length < 3) usage('need a prompt and at least two options');
-  if (o.rest.length > 7) usage('at most six options');
+  if (o.rest.length > 6) usage('at most five options');
   [o.prompt, ...o.options] = o.rest;
-  if (o.options.some((s) => s === '')) usage('options must be non-empty');
+  if (o.prompt.trim() === '') usage('prompt must be non-empty');
+  if (o.options.some((s) => s.trim() === '')) usage('options must be non-empty');
+  if (new Set(o.options).size !== o.options.length) usage('options must be distinct');
+  if (o.timeout < 0) usage('--timeout must be >= 0');
   if (o.primary < 1 || o.primary > o.options.length) usage('--primary out of range');
   return o;
 }
@@ -59,7 +65,7 @@ body{font:14px/1.45 system-ui,-apple-system,'Inter',sans-serif;color:var(--ink);
 background:radial-gradient(400px 160px at 100% -20%,var(--paper-2),rgba(234,245,254,0) 70%),var(--paper);
 border:1px solid var(--rule);border-left:4px solid var(--accent);padding:14px 16px;display:flex;flex-direction:column;gap:10px}
 .eyebrow{font:500 10px ui-monospace,'JetBrains Mono',monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
-.q{font-weight:600;font-size:16px;line-height:1.3;padding-bottom:.06em;flex:1;overflow:hidden}
+.q{font-weight:600;font-size:16px;line-height:1.3;padding-bottom:.06em;flex:1;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 button{font:500 13px system-ui,-apple-system,sans-serif;color:var(--accent-deep);background:var(--paper);border:1px solid var(--rule);
 border-radius:9px;padding:7px 12px;cursor:pointer}
@@ -97,8 +103,9 @@ async function place(g, o, w, h) {
   if (o.x != null && o.y != null) return { x: o.x, y: o.y };
   if (o.position === 'center') return {};
   const info = await new Promise((resolve) => {
+    let p;
     const t = setTimeout(() => { try { p.close(); } catch { /* ignore */ } resolve(null); }, 4000);
-    const p = g.open('<html></html>', { hidden: true, width: 10, height: 10 });
+    try { p = g.open('<html></html>', { hidden: true, width: 10, height: 10 }); } catch { clearTimeout(t); resolve(null); return; }
     p.on('ready', (i) => { clearTimeout(t); p.close(); resolve(i); });
     p.on('error', () => { clearTimeout(t); resolve(null); });
   });
@@ -114,17 +121,38 @@ async function place(g, o, w, h) {
 }
 
 function finish(o, outcome, answer) {
-  if (o.json) process.stdout.write(JSON.stringify(answer == null ? { outcome } : { outcome, answer }) + '\n');
+  if (o.json) process.stdout.write(JSON.stringify({ outcome, answer: answer ?? null }) + '\n');
   else if (outcome === 'answered') process.stdout.write(answer + '\n');
   process.exit(EXIT[outcome]);
+}
+
+// Rough layout estimate: wrapped prompt lines plus greedy button rows, clamped so a huge
+// prompt scrolls inside the window instead of growing it past MAX_HEIGHT.
+function estimateHeight(o, width) {
+  const inner = width - 36;
+  const lines = o.prompt.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 38)), 0);
+  let rows = 1;
+  let used = 0;
+  for (const opt of o.options) {
+    const w = 8 * opt.length + 50;
+    if (used > 0 && used + w + 8 > inner) { rows++; used = 0; }
+    used += w + 8;
+  }
+  return Math.min(MAX_HEIGHT, Math.max(150, 100 + 21 * lines + 34 * rows));
 }
 
 const o = parse(process.argv.slice(2));
 const g = await loadGlimpse();
 const width = 380;
-const height = 150 + 22 * Math.floor((o.prompt.length + 7 * o.options.length) / 60);
+const height = estimateHeight(o, width);
 const pos = await place(g, o, width, height);
-const win = g.open(render(o), { width, height, title: o.title, frameless: true, floating: true, noDock: true, autoClose: true, ...pos });
+let win;
+try {
+  win = g.open(render(o), { width, height, title: o.title, frameless: true, floating: true, noDock: true, autoClose: true, ...pos });
+} catch (e) {
+  process.stderr.write(`error: cannot open the window (${e.message})\n`);
+  finish(o, 'unavailable');
+}
 
 let settled = false;
 const settle = (outcome, answer) => {
@@ -143,6 +171,10 @@ win.on('message', (d) => {
 win.on('closed', () => settle('dismissed'));
 win.on('error', (e) => {
   process.stderr.write(`error: ${e.message}\n`);
+  if (settled) return;
   settled = true;
-  process.exit(EXIT.unavailable);
+  clearTimeout(timer);
+  finish(o, 'unavailable');
 });
+// A killed or interrupted caller closes the window rather than orphaning it; never a pick.
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => settle('dismissed'));
