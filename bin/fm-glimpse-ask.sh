@@ -20,13 +20,23 @@
 #     *)  : ;;  # off, muted, dismissed, timeout, unavailable, usage: no answer was given -
 #               # ask the same question in plain text instead.
 #   esac
+#
+# LIVE vs DEMO (the caller declares which; default = live):
+#   A normal call is a LIVE decision: clean card, solid accent, "Firstmate - needs you - live
+#   decision" header. Pass --mode demo (alias --test) on EVERY call that is merely demoing or
+#   render-testing the popup ("let me show you the popup", worker render-checks); it renders a
+#   muted grey dashed card under a striped "DEMO - not a real decision" ribbon, "(DEMO)" in the
+#   window title, and no highlighted primary button, so the captain never mistakes it for
+#   something waiting on him. --demo (the sample "Merge PR?" popup) is demo mode automatically.
+#   NEVER pass the demo marker on a real decision; ALWAYS pass it on a test/demo pop.
+#   The mode changes looks only: exit codes, --json shape, gating, mute and free text are identical.
 # Never treat anything but exit 0 as a pick, and never infer an answer from a dismissed
 # or timed-out window. Plain mode (no --json) prints just the chosen label on stdout for
 # exit 0, "FREETEXT: <typed text>" for exit 14, and nothing otherwise.
 #
 # Usage:
 #   fm-glimpse-ask.sh [--title T] [--timeout SEC] [--position CORNER] [--x N --y N]
-#                     [--primary N] [--json] [--] <prompt> <option> [<option>...]
+#                     [--primary N] [--json] [--mode live|demo | --test] [--] <prompt> <option> [<option>...]
 #   fm-glimpse-ask.sh --demo        sample "Merge PR? [Yes] [No] [Not now]"
 #   fm-glimpse-ask.sh --status      print whether the popup is enabled/muted/installed
 # A prompt (any text, newlines allowed) and two to five distinct, non-empty

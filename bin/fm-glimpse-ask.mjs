@@ -16,13 +16,13 @@ const CORNERS = ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'center
 function usage(msg) {
   if (msg) process.stderr.write(`error: ${msg}\n`);
   process.stderr.write('usage: fm-glimpse-ask.sh [--title T] [--timeout SEC] [--position CORNER] [--x N --y N]\n'
-    + '                        [--primary N] [--json] [--demo] [--] <prompt> <option> [<option>...]\n');
+    + '                        [--primary N] [--json] [--mode live|demo] [--test] [--demo] [--] <prompt> <option> [<option>...]\n');
   process.exit(EXIT.usage);
 }
 
 function parse(argv) {
   const envT = process.env.FM_GLIMPSE_ASK_TIMEOUT;
-  const o = { title: 'Firstmate', timeout: /^\d+$/.test(envT ?? '') ? Number(envT) : DEFAULT_TIMEOUT, position: 'bottom-right', primary: 1, json: false, rest: [] };
+  const o = { title: 'Firstmate', timeout: /^\d+$/.test(envT ?? '') ? Number(envT) : DEFAULT_TIMEOUT, position: 'bottom-right', primary: 1, json: false, mode: 'live', rest: [] };
   const num = (flag, v) => {
     if (v === undefined || !/^-?\d+$/.test(v)) usage(`${flag} needs an integer`);
     return Number(v);
@@ -37,11 +37,14 @@ function parse(argv) {
     else if (a === '--y') o.y = num(a, argv[++i]);
     else if (a === '--primary') o.primary = num(a, argv[++i]);
     else if (a === '--json') o.json = true;
-    else if (a === '--demo') o.demo = true;
+    else if (a === '--mode') o.mode = argv[++i] ?? usage('--mode needs a value');
+    else if (a === '--test') o.mode = 'demo';
+    else if (a === '--demo') { o.demo = true; o.mode = 'demo'; }
     else if (a.startsWith('--')) usage(`unknown flag ${a}`);
     else o.rest.push(a);
   }
   if (o.demo && o.rest.length === 0) o.rest = ['Merge PR?', 'Yes', 'No', 'Not now'];
+  if (o.mode !== 'live' && o.mode !== 'demo') usage('--mode must be live or demo');
   if (!CORNERS.includes(o.position)) usage(`--position must be one of ${CORNERS.join(', ')}`);
   if (o.rest.length < 3) usage('need a prompt and at least two options');
   if (o.rest.length > 6) usage('at most five options');
@@ -57,7 +60,11 @@ function parse(argv) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // Blueprint-paper tokens inlined from the captain's Lavish house style; no external links.
+// Two looks, never confusable: LIVE (default) is the clean solid-accent card under a filled
+// "needs you" banner; DEMO is a muted grey card with a dashed outline and a hazard-striped
+// "not a real decision" ribbon, with the primary button demoted so nothing reads as actionable.
 function render(o) {
+  const demo = o.mode === 'demo';
   const buttons = o.options.map((opt, i) =>
     `<button class="${i + 1 === o.primary ? 'pri' : ''}" onclick="glimpse.send({i:${i}})"><kbd>${i + 1}</kbd>${esc(opt)}</button>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -67,7 +74,13 @@ html,body{height:100%;overflow:hidden}
 body{font:14px/1.45 system-ui,-apple-system,'Inter',sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;
 background:radial-gradient(400px 160px at 100% -20%,var(--paper-2),rgba(234,245,254,0) 70%),var(--paper);
 border:1px solid var(--rule);border-left:4px solid var(--accent);padding:18px 20px;display:flex;flex-direction:column;gap:12px}
-.eyebrow{font:500 10px ui-monospace,'JetBrains Mono',monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
+.eyebrow{font:600 10px ui-monospace,'JetBrains Mono',monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
+.eyebrow i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:1px}
+body.demo{background:#F4F5F7;border:2px dashed #9AA3B2;border-left:2px dashed #9AA3B2;color:var(--ink-3)}
+body.demo .eyebrow{color:#4B5B7C;background:repeating-linear-gradient(135deg,#E3E6EB 0 8px,#F4F5F7 8px 16px);border:1px solid #C3C9D4;border-radius:6px;padding:4px 8px;text-align:center}
+body.demo button{color:var(--ink-3);border-style:dashed;border-color:#9AA3B2;background:#F4F5F7}
+body.demo button.pri{background:#F4F5F7;border-color:#9AA3B2;color:var(--ink-3)}
+body.demo .q{color:var(--ink-3)}
 .q{font-weight:600;font-size:16px;line-height:1.4;padding-bottom:.06em;flex:1;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .row.stack{flex-direction:column;flex-wrap:nowrap}
@@ -84,12 +97,12 @@ kbd{font:500 10px ui-monospace,monospace;opacity:.55;margin-right:8px}
 .free input::placeholder{color:var(--ink-3)}
 .free button{flex:none;text-align:center;padding:7px 14px}
 .hint{font:400 10px ui-monospace,monospace;color:var(--ink-3)}
-</style></head><body>
-<div class="eyebrow">Firstmate &middot; needs you</div>
+</style></head><body${demo ? ' class="demo"' : ''}>
+<div class="eyebrow">${demo ? 'DEMO - not a real decision' : '<i></i>Firstmate &middot; needs you &middot; live decision'}</div>
 <div class="q">${esc(o.prompt)}</div>
 <div class="row${stacked(o) ? ' stack' : ''}">${buttons}</div>
 <form class="free" onsubmit="return sendText()"><input id="t" type="text" maxlength="${MAX_TEXT}" autocomplete="off" placeholder="...or type a comment / question / other"><button type="submit">Send</button></form>
-<div class="hint">press 1-${o.options.length} &middot; esc = not now</div>
+<div class="hint">${demo ? 'demo only - nothing is waiting on you &middot; esc closes' : `press 1-${o.options.length} &middot; esc = not now`}</div>
 <script>
 function sendText(){var v=document.getElementById('t').value.trim();if(v)glimpse.send({text:v});return false}
 document.addEventListener('keydown',function(e){
@@ -172,7 +185,7 @@ function estimateHeight(o, width) {
     }
     btnH = rows * 36 + (rows - 1) * 8;
   }
-  const total = 36 + 14 + 12 + 23 * qLines + 12 + btnH + 12 + 36 + 12 + 13 + 6; // + free-text row
+  const total = 36 + (o.mode === 'demo' ? 30 : 14) + 12 + 23 * qLines + 12 + btnH + 12 + 36 + 12 + 13 + 6; // + free-text row
   return Math.min(MAX_HEIGHT, Math.max(150, Math.ceil(total)));
 }
 
@@ -183,7 +196,7 @@ const height = estimateHeight(o, width);
 const pos = await place(g, o, width, height);
 let win;
 try {
-  win = g.open(render(o), { width, height, title: o.title, frameless: true, floating: true, noDock: true, autoClose: true, ...pos });
+  win = g.open(render(o), { width, height, title: o.mode === 'demo' ? `${o.title} (DEMO)` : o.title, frameless: true, floating: true, noDock: true, autoClose: true, ...pos });
 } catch (e) {
   process.stderr.write(`error: cannot open the window (${e.message})\n`);
   finish(o, 'unavailable');

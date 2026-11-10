@@ -227,6 +227,51 @@ test_free_text_ui_present() {
   assert_not_contains "$log" '"height":150' "height accounts for the extra row"
   pass "every popup renders the free-text field below the options"
 }
+test_live_vs_demo_mode() {
+  local live demo
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" "Merge?" "Yes" "No"
+  live=$(cat "$TD/log.json")
+  assert_contains "$live" 'live decision' "default is the live look"
+  assert_not_contains "$live" 'not a real decision' "live has no demo ribbon"
+  assert_not_contains "$live" 'class=\"demo\"' "live body is not demo-styled"
+  assert_not_contains "$live" '(DEMO)' "live window title is plain"
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" --demo
+  demo=$(cat "$TD/log.json")
+  assert_contains "$demo" 'not a real decision' "--demo shows the ribbon"
+  assert_contains "$demo" 'class=\"demo\"' "--demo body is demo-styled"
+  assert_contains "$demo" '(DEMO)' "--demo window title is marked"
+  assert_not_contains "$demo" 'live decision' "demo never reads as live"
+  for flags in "--mode demo" "--test"; do
+    # shellcheck disable=SC2086
+    run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" $flags "Merge?" "Yes" "No"
+    assert_contains "$(cat "$TD/log.json")" 'not a real decision' "$flags marks a custom prompt as demo"
+  done
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" --mode live "Merge?" "Yes" "No"
+  assert_contains "$(cat "$TD/log.json")" 'live decision' "--mode live is the live look"
+  run click:0 FM_GLIMPSE_ASK=1 "$ASK" --mode bogus "Merge?" "Yes" "No"
+  assert_equals 2 "$RC" "bad mode is a usage error"
+  assert_contains "$("$ASK" --help)" "--mode demo" "mode flag documented"
+  pass "demo and live popups render distinguishably; default is live"
+}
+test_demo_mode_keeps_contracts() {
+  run click:1 FM_GLIMPSE_ASK=1 "$ASK" --json --mode demo "Merge?" "Yes" "No"
+  assert_equals '{"outcome":"answered","answer":"No"}' "$OUT" "demo pick json"
+  run text:"why" FM_GLIMPSE_ASK=1 "$ASK" --json --test "Merge?" "Yes" "No"
+  assert_equals 14 "$RC" "demo freetext exit"
+  assert_equals '{"outcome":"freetext","answer":"why"}' "$OUT" "demo freetext json"
+  run close FM_GLIMPSE_ASK=1 "$ASK" --json --test "Merge?" "Yes" "No"
+  assert_equals 11 "$RC" "demo dismissed exit"
+  run silent FM_GLIMPSE_ASK=1 "$ASK" --json --test --timeout 1 "Merge?" "Yes" "No"
+  assert_equals 12 "$RC" "demo timeout exit"
+  run click:0 "$ASK" --json --test "Merge?" "Yes" "No"
+  assert_equals 10 "$RC" "demo still gated by the toggle"
+  run click:0 FM_GLIMPSE_ASK=1 FM_GLIMPSE_ASK_MUTE=1 "$ASK" --json --test "Merge?" "Yes" "No"
+  assert_equals '{"outcome":"muted","answer":null}' "$OUT" "demo still honors mute"
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" --test "Merge?" "Yes" "No"
+  assert_contains "$(cat "$TD/log.json")" 'type=\"text\"' "demo keeps the free-text field"
+  assert_contains "$(cat "$TD/log.json")" '"width":400' "demo keeps the width logic"
+  pass "demo mode is visual only: exits, json, gating, mute, free text unchanged"
+}
 test_unavailable_paths() {
   run throw FM_GLIMPSE_ASK=1 "$ASK" --json --demo
   assert_equals 13 "$RC" "open throws"
@@ -279,4 +324,5 @@ fm_test_run test_default_off_opens_nothing test_env_enables_and_click_answers \
   test_json_shape_every_outcome test_caller_pattern test_multi_option_labels \
   test_option_count_bounds test_odd_prompts_never_crash test_small_unobtrusive_window \
   test_long_prompt_gets_wide_roomy_window test_freetext_outcome test_freetext_caller_pattern test_free_text_ui_present \
+  test_live_vs_demo_mode test_demo_mode_keeps_contracts \
   test_unavailable_paths test_timeout_default_and_override test_status_and_gating_precedence
