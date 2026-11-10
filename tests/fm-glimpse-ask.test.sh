@@ -148,7 +148,7 @@ test_odd_prompts_never_crash() {
   run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" "$long" "Yes" "No"
   assert_equals 0 "$RC" "long prompt exit"
   assert_equals "Yes" "$OUT" "long prompt answer"
-  assert_contains "$(cat "$TD/log.json")" '"height":420' "tall prompt height is clamped"
+  assert_contains "$(cat "$TD/log.json")" '"height":480' "tall prompt height is clamped"
   odd=$'multi\nline <script>alert(1)</script> "q" \'s & \\ $(rm -rf x) `x`'
   run click:1 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" "$odd" "Yes" "No"
   assert_equals 0 "$RC" "odd prompt exit"
@@ -164,11 +164,26 @@ test_small_unobtrusive_window() {
   assert_contains "$log" '"floating":true' "floating"
   assert_contains "$log" '"noDock":true' "no dock icon"
   assert_contains "$log" '"frameless":true' "frameless"
-  assert_contains "$log" '"width":380' "small width"
-  assert_contains "$log" '"x":596' "bottom-right x (1000-380-24)"
+  assert_contains "$log" '"width":400' "compact width for a short prompt"
+  assert_contains "$log" '"x":576' "bottom-right x (1000-400-24)"
   assert_contains "$log" '"y":24' "bottom margin"
   assert_contains "$log" '#066AFE' "blueprint accent"
   pass "window is small, floating, dockless, bottom-right, blueprint-styled"
+}
+test_long_prompt_gets_wide_roomy_window() {
+  local title='Fleet Memory: bigger model (mpnet) did NOT win back the paraphrase query & cost 5.4x more. Next move?'
+  local opt='Try the pipeline fix first (union pools + query expansion)'
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" "$title" "$opt" "Ship the bigger model anyway" "Not now"
+  assert_equals 0 "$RC" "long real-world prompt exit"
+  assert_equals "$opt" "$OUT" "long label returned exactly"
+  local log; log=$(cat "$TD/log.json")
+  assert_contains "$log" '"width":540' "wide window for a long title and long labels"
+  assert_contains "$log" '"x":436' "bottom-right x (1000-540-24)"
+  assert_contains "$log" 'class=\"row stack\"' "long labels stack one per line"
+  assert_not_contains "$log" '"height":150' "height grows past the minimum"
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" "Merge PR?" "Yes" "No"
+  assert_not_contains "$(cat "$TD/log.json")" 'row stack' "short labels stay on one compact row"
+  pass "long titles and labels get a wider, stacked, taller window; short ones stay compact"
 }
 test_unavailable_paths() {
   run throw FM_GLIMPSE_ASK=1 "$ASK" --json --demo

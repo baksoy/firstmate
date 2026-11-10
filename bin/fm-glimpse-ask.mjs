@@ -6,7 +6,9 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_TIMEOUT = 120;
-const MAX_HEIGHT = 420;
+const MAX_HEIGHT = 480;
+const NARROW = 400; // short prompt + short options: stay small and unobtrusive
+const WIDE = 540; // realistic long title (~120 chars) + long option labels (~60 chars)
 const EXIT = { answered: 0, usage: 2, disabled: 10, dismissed: 11, timeout: 12, unavailable: 13 };
 const CORNERS = ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'center'];
 
@@ -63,20 +65,23 @@ function render(o) {
 html,body{height:100%;overflow:hidden}
 body{font:14px/1.45 system-ui,-apple-system,'Inter',sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;
 background:radial-gradient(400px 160px at 100% -20%,var(--paper-2),rgba(234,245,254,0) 70%),var(--paper);
-border:1px solid var(--rule);border-left:4px solid var(--accent);padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+border:1px solid var(--rule);border-left:4px solid var(--accent);padding:18px 20px;display:flex;flex-direction:column;gap:12px}
 .eyebrow{font:500 10px ui-monospace,'JetBrains Mono',monospace;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
-.q{font-weight:600;font-size:16px;line-height:1.3;padding-bottom:.06em;flex:1;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.q{font-weight:600;font-size:16px;line-height:1.4;padding-bottom:.06em;flex:1;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .row{display:flex;gap:8px;flex-wrap:wrap}
-button{font:500 13px system-ui,-apple-system,sans-serif;color:var(--accent-deep);background:var(--paper);border:1px solid var(--rule);
-border-radius:9px;padding:7px 12px;cursor:pointer}
+.row.stack{flex-direction:column;flex-wrap:nowrap}
+button{font:500 13px/1.4 system-ui,-apple-system,sans-serif;color:var(--accent-deep);background:var(--paper);border:1px solid var(--rule);
+border-radius:9px;padding:8px 14px;cursor:pointer;text-align:left;overflow-wrap:anywhere}
+.stack button{display:flex;align-items:baseline;width:100%}
+.stack kbd{flex:none}
 button:hover{border-color:var(--accent);background:var(--paper-2)}
 button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-kbd{font:500 10px ui-monospace,monospace;opacity:.55;margin-right:6px}
+kbd{font:500 10px ui-monospace,monospace;opacity:.55;margin-right:8px}
 .hint{font:400 10px ui-monospace,monospace;color:var(--ink-3)}
 </style></head><body>
 <div class="eyebrow">Firstmate &middot; needs you</div>
 <div class="q">${esc(o.prompt)}</div>
-<div class="row">${buttons}</div>
+<div class="row${stacked(o) ? ' stack' : ''}">${buttons}</div>
 <div class="hint">press 1-${o.options.length} &middot; esc = not now</div>
 <script>
 document.addEventListener('keydown',function(e){
@@ -126,24 +131,44 @@ function finish(o, outcome, answer) {
   process.exit(EXIT[outcome]);
 }
 
-// Rough layout estimate: wrapped prompt lines plus greedy button rows, clamped so a huge
-// prompt scrolls inside the window instead of growing it past MAX_HEIGHT.
+// Long option labels get one full-width button per line (wrapping inside the button) instead of
+// a ragged flex row; short ones stay on a single compact row.
+const stacked = (o) => o.options.some((x) => x.length > 14) || o.options.join('').length > 40;
+
+// Content-aware width: compact for a short prompt, wider once the title or a label would cramp.
+function widthFor(o) {
+  const longestLine = Math.max(...o.prompt.split('\n').map((l) => l.length));
+  const longestOpt = Math.max(...o.options.map((x) => x.length));
+  return longestLine <= 44 && longestOpt <= 24 ? NARROW : WIDE;
+}
+
+// Rough layout estimate (chars-per-line from average glyph widths, slightly pessimistic so text is
+// never clipped), clamped so a huge prompt scrolls inside the window instead of growing past MAX_HEIGHT.
 function estimateHeight(o, width) {
-  const inner = width - 36;
-  const lines = o.prompt.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 38)), 0);
-  let rows = 1;
-  let used = 0;
-  for (const opt of o.options) {
-    const w = 8 * opt.length + 50;
-    if (used > 0 && used + w + 8 > inner) { rows++; used = 0; }
-    used += w + 8;
+  const inner = width - 4 - 40; // left border + side padding
+  const wrap = (t, cpl) => t.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cpl)), 0);
+  const qLines = wrap(o.prompt, Math.floor(inner / 9));
+  let btnH;
+  if (stacked(o)) {
+    const cpl = Math.floor((inner - 28 - 20) / 7.6); // button padding + number badge
+    btnH = o.options.reduce((h, x) => h + 18 + 18 * wrap(x, cpl) + 8, -8);
+  } else {
+    let rows = 1;
+    let used = 0;
+    for (const opt of o.options) {
+      const w = 7.6 * opt.length + 28 + 20;
+      if (used > 0 && used + w + 8 > inner) { rows++; used = 0; }
+      used += w + 8;
+    }
+    btnH = rows * 36 + (rows - 1) * 8;
   }
-  return Math.min(MAX_HEIGHT, Math.max(150, 100 + 21 * lines + 34 * rows));
+  const total = 36 + 14 + 12 + 23 * qLines + 12 + btnH + 12 + 13 + 6;
+  return Math.min(MAX_HEIGHT, Math.max(150, Math.ceil(total)));
 }
 
 const o = parse(process.argv.slice(2));
 const g = await loadGlimpse();
-const width = 380;
+const width = widthFor(o);
 const height = estimateHeight(o, width);
 const pos = await place(g, o, width, height);
 let win;
