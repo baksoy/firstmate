@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # fm-glimpse-ask.sh - OPT-IN click-to-answer DECISION ENTRY POINT (glimpseui).
 #
-# A small native window (WKWebView, via the glimpseui npm package) with a prompt
-# and one button per option. The clicked option is returned to the caller and the
-# exit code says what happened, so firstmate can branch on it. It is the opposite
+# A small native window (WKWebView, via the glimpseui npm package) with a prompt,
+# one button per option, and an always-present free-text field. The clicked option
+# (or typed text) is returned to the caller and the exit code says what happened,
+# so firstmate can branch on it. It is the opposite
 # of a lavish page: a quick "answer if needed" prompt. Call it ONLY at a moment
 # the turn really needs the captain's decision; when nothing is needed, do not
 # call it. Nothing in the supervision or turn-end flow calls it - firstmate (the
@@ -11,15 +12,17 @@
 #
 # RECOMMENDED CALL (machine-read path is --json; its keys are stable):
 #   ans=$(bin/fm-glimpse-ask.sh --json --timeout 120 "Merge PR #12?" "Yes" "No" "Not now"); rc=$?
-#   if [ "$rc" -eq 0 ]; then
-#     pick=$(printf '%s' "$ans" | jq -r .answer)    # the captain's reply, the exact clicked label
-#   else
-#     : # ANY non-zero exit (off, muted, dismissed, timeout, unavailable, usage):
-#       # no answer was given - ask the same question in plain text instead.
-#   fi
-# Never treat a non-zero exit as a pick, and never infer an answer from a dismissed
-# or timed-out window. Plain mode (no --json) prints just the chosen label on
-# stdout for exit 0 and nothing otherwise.
+#   case "$rc" in
+#     0)  pick=$(printf '%s' "$ans" | jq -r .answer) ;;   # a preset pick: the exact clicked label
+#     14) msg=$(printf '%s' "$ans" | jq -r .answer) ;;    # FREE TEXT from the captain: read it and
+#                                                          # respond; it is NOT a decision pick, so
+#                                                          # the question stays open
+#     *)  : ;;  # off, muted, dismissed, timeout, unavailable, usage: no answer was given -
+#               # ask the same question in plain text instead.
+#   esac
+# Never treat anything but exit 0 as a pick, and never infer an answer from a dismissed
+# or timed-out window. Plain mode (no --json) prints just the chosen label on stdout for
+# exit 0, "FREETEXT: <typed text>" for exit 14, and nothing otherwise.
 #
 # Usage:
 #   fm-glimpse-ask.sh [--title T] [--timeout SEC] [--position CORNER] [--x N --y N]
@@ -27,7 +30,9 @@
 #   fm-glimpse-ask.sh --demo        sample "Merge PR? [Yes] [No] [Not now]"
 #   fm-glimpse-ask.sh --status      print whether the popup is enabled/muted/installed
 # A prompt (any text, newlines allowed) and two to five distinct, non-empty
-# options. Keys 1-5 pick an option, Esc dismisses. --primary N highlights option N
+# options. Keys 1-5 pick an option, Esc dismisses. Below the buttons every popup has a
+# "...or type a comment / question / other" field with a Send button (Enter also sends);
+# typing there returns free text instead of a pick (keys 1-5 are inert while typing). --primary N highlights option N
 # (default 1). --timeout SEC waits that long (0 = forever); default 120, overridable
 # per call or via FM_GLIMPSE_ASK_TIMEOUT. A long prompt scrolls inside the window.
 #
@@ -37,10 +42,15 @@
 #   11  dismissed     window closed without an answer; NOT a pick
 #   12  timeout       no click within --timeout; window closed
 #   13  unavailable   node/glimpseui missing or its native binary cannot run
+#   14  freetext      the captain typed a reply instead of picking; stdout carries the
+#                     text (plain mode: prefixed "FREETEXT: "). Not a pick - and a
+#                     separate non-zero code so a caller written before free text existed
+#                     can never mistake it for one (it just falls back to plain text)
 #   2   usage         bad arguments (nothing is printed to stdout)
 # --json prints exactly one line on stdout for every outcome except usage:
-#   {"outcome":"answered|off|muted|dismissed|timeout|unavailable","answer":"<label>"|null}
-# "answer" is non-null only for outcome "answered" (exit 0). Diagnostics go to stderr.
+#   {"outcome":"answered|freetext|off|muted|dismissed|timeout|unavailable","answer":"<label or typed text>"|null}
+# "answer" is non-null only for outcomes "answered" (exit 0, a preset label) and
+# "freetext" (exit 14, the trimmed typed text, at most 2000 chars). Diagnostics go to stderr.
 #
 # Enable (default OFF - an explicit opt-in per call or per home):
 #   FM_GLIMPSE_ASK=1                    for one command, or

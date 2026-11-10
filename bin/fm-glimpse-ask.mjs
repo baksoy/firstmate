@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // fm-glimpse-ask.mjs - node half of bin/fm-glimpse-ask.sh (see its header for the contract).
-// Opens one small glimpseui window with a prompt and one button per option,
-// waits for a click, prints the answer, and exits with a distinct code per outcome.
+// Opens one small glimpseui window with a prompt, one button per option and a free-text field,
+// waits for a click or typed reply, prints the answer, and exits with a distinct code per outcome.
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
@@ -9,7 +9,8 @@ const DEFAULT_TIMEOUT = 120;
 const MAX_HEIGHT = 480;
 const NARROW = 400; // short prompt + short options: stay small and unobtrusive
 const WIDE = 540; // realistic long title (~120 chars) + long option labels (~60 chars)
-const EXIT = { answered: 0, usage: 2, disabled: 10, dismissed: 11, timeout: 12, unavailable: 13 };
+const MAX_TEXT = 2000; // free-text reply cap (also the input's maxlength)
+const EXIT = { answered: 0, usage: 2, disabled: 10, dismissed: 11, timeout: 12, unavailable: 13, freetext: 14 };
 const CORNERS = ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'center'];
 
 function usage(msg) {
@@ -77,15 +78,23 @@ border-radius:9px;padding:8px 14px;cursor:pointer;text-align:left;overflow-wrap:
 button:hover{border-color:var(--accent);background:var(--paper-2)}
 button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
 kbd{font:500 10px ui-monospace,monospace;opacity:.55;margin-right:8px}
+.free{display:flex;gap:8px;align-items:stretch}
+.free input{flex:1;font:400 13px/1.4 system-ui,-apple-system,sans-serif;color:var(--ink);background:var(--paper);border:1px solid var(--rule);border-radius:9px;padding:7px 10px;outline:none}
+.free input:focus{border-color:var(--accent)}
+.free input::placeholder{color:var(--ink-3)}
+.free button{flex:none;text-align:center;padding:7px 14px}
 .hint{font:400 10px ui-monospace,monospace;color:var(--ink-3)}
 </style></head><body>
 <div class="eyebrow">Firstmate &middot; needs you</div>
 <div class="q">${esc(o.prompt)}</div>
 <div class="row${stacked(o) ? ' stack' : ''}">${buttons}</div>
+<form class="free" onsubmit="return sendText()"><input id="t" type="text" maxlength="${MAX_TEXT}" autocomplete="off" placeholder="...or type a comment / question / other"><button type="submit">Send</button></form>
 <div class="hint">press 1-${o.options.length} &middot; esc = not now</div>
 <script>
+function sendText(){var v=document.getElementById('t').value.trim();if(v)glimpse.send({text:v});return false}
 document.addEventListener('keydown',function(e){
  if(e.key==='Escape'){glimpse.close();return}
+ if(e.target&&e.target.id==='t')return;
  var n=parseInt(e.key,10);if(n>=1&&n<=${o.options.length})glimpse.send({i:n-1});
 });
 </script></body></html>`;
@@ -128,6 +137,7 @@ async function place(g, o, w, h) {
 function finish(o, outcome, answer) {
   if (o.json) process.stdout.write(JSON.stringify({ outcome, answer: answer ?? null }) + '\n');
   else if (outcome === 'answered') process.stdout.write(answer + '\n');
+  else if (outcome === 'freetext') process.stdout.write('FREETEXT: ' + answer + '\n');
   process.exit(EXIT[outcome]);
 }
 
@@ -162,7 +172,7 @@ function estimateHeight(o, width) {
     }
     btnH = rows * 36 + (rows - 1) * 8;
   }
-  const total = 36 + 14 + 12 + 23 * qLines + 12 + btnH + 12 + 13 + 6;
+  const total = 36 + 14 + 12 + 23 * qLines + 12 + btnH + 12 + 36 + 12 + 13 + 6; // + free-text row
   return Math.min(MAX_HEIGHT, Math.max(150, Math.ceil(total)));
 }
 
@@ -192,6 +202,7 @@ const timer = o.timeout > 0 ? setTimeout(() => settle('timeout'), o.timeout * 10
 win.on('message', (d) => {
   const i = d?.i;
   if (Number.isInteger(i) && i >= 0 && i < o.options.length) settle('answered', o.options[i]);
+  else if (typeof d?.text === 'string' && d.text.trim() !== '') settle('freetext', d.text.trim().slice(0, MAX_TEXT));
 });
 win.on('closed', () => settle('dismissed'));
 win.on('error', (e) => {

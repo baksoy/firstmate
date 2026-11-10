@@ -12,7 +12,7 @@ mkdir -p "$TD/home/config" "$TD/home/state" "$TD/mod/src"
 cat > "$TD/mod/package.json" <<'JSON'
 {"name":"glimpseui","type":"module","main":"src/glimpse.mjs","exports":{".":"./src/glimpse.mjs"}}
 JSON
-# Stub: STUB_MODE = click:<n> | close | silent | error | throw. Emits after the window "opens".
+# Stub: STUB_MODE = click:<n> | text:<string> | close | silent | error | throw. Emits after the window "opens".
 # The last stub-received html/options are written to $STUB_LOG when set.
 cat > "$TD/mod/src/glimpse.mjs" <<'JS'
 import { EventEmitter } from 'node:events';
@@ -26,6 +26,7 @@ export function open(html, opts) {
     if (opts.hidden) { w.emit('ready', { screen: { visibleX: 0, visibleY: 0, visibleWidth: 1000, visibleHeight: 800 } }); return; }
     const m = process.env.STUB_MODE || 'silent';
     if (m.startsWith('click:')) w.emit('message', { i: Number(m.slice(6)) });
+    else if (m.startsWith('text:')) w.emit('message', { text: m.slice(5) });
     else if (m === 'close') w.emit('closed');
     else if (m === 'error') w.emit('error', new Error('stub native failure'));
   }, 20);
@@ -185,6 +186,47 @@ test_long_prompt_gets_wide_roomy_window() {
   assert_not_contains "$(cat "$TD/log.json")" 'row stack' "short labels stay on one compact row"
   pass "long titles and labels get a wider, stacked, taller window; short ones stay compact"
 }
+test_freetext_outcome() {
+  run text:"why not wait a day?" FM_GLIMPSE_ASK=1 "$ASK" --json --demo
+  assert_equals 14 "$RC" "freetext exit"
+  assert_equals '{"outcome":"freetext","answer":"why not wait a day?"}' "$OUT" "freetext json"
+  run text:"  padded & <b>quoted</b> \"x\"  " FM_GLIMPSE_ASK=1 "$ASK" --json --demo
+  assert_equals '{"outcome":"freetext","answer":"padded & <b>quoted</b> \"x\""}' "$OUT" "trimmed, escaped json"
+  run text:"a question" FM_GLIMPSE_ASK=1 "$ASK" --demo
+  assert_equals 14 "$RC" "plain exit"
+  assert_equals "FREETEXT: a question" "$OUT" "plain mode prefix"
+  run text:"Yes" FM_GLIMPSE_ASK=1 "$ASK" --json --demo
+  assert_equals 14 "$RC" "typing a preset's label is still free text"
+  assert_equals '{"outcome":"freetext","answer":"Yes"}' "$OUT" "label-lookalike stays freetext"
+  run text:"   " FM_GLIMPSE_ASK=1 "$ASK" --json --timeout 1 --demo
+  assert_equals 12 "$RC" "blank text is ignored (times out)"
+  run click:0 FM_GLIMPSE_ASK=1 "$ASK" --json --demo
+  assert_equals 0 "$RC" "preset pick still exits 0"
+  assert_equals '{"outcome":"answered","answer":"Yes"}' "$OUT" "preset pick unchanged"
+  pass "free text exits 14 with outcome freetext, distinct from a preset pick"
+}
+test_freetext_caller_pattern() {
+  local ans rc msg
+  ans=$(STUB_MODE="text:hold on, one question" FM_HOME="$TD/home" FM_GLIMPSE_MODULE="$TD/mod" FM_GLIMPSE_ASK=1 "$ASK" --json --timeout 5 "Merge it?" "Ship it" "Hold on" 2>/dev/null); rc=$?
+  msg=""
+  case "$rc" in
+    0)  msg="PICK" ;;
+    14) msg=$(printf '%s' "$ans" | sed -n 's/.*"answer":"\([^"]*\)".*/\1/p') ;;
+  esac
+  assert_equals "hold on, one question" "$msg" "caller branches free text off exit 14"
+  pass "documented caller pattern: exit 14 yields the free-form message"
+}
+test_free_text_ui_present() {
+  run click:0 FM_GLIMPSE_ASK=1 STUB_LOG="$TD/log.json" "$ASK" "Merge?" "Yes" "No"
+  local log; log=$(cat "$TD/log.json")
+  assert_contains "$log" 'type=\"text\"' "text input rendered"
+  assert_contains "$log" 'or type a comment / question / other' "escape-hatch placeholder"
+  assert_contains "$log" '>Send<' "send button"
+  assert_not_contains "$log" 'autofocus' "keys 1-5 stay live until the captain clicks the field"
+  assert_contains "$log" '"width":400' "short prompt keeps the compact width"
+  assert_not_contains "$log" '"height":150' "height accounts for the extra row"
+  pass "every popup renders the free-text field below the options"
+}
 test_unavailable_paths() {
   run throw FM_GLIMPSE_ASK=1 "$ASK" --json --demo
   assert_equals 13 "$RC" "open throws"
@@ -236,4 +278,5 @@ fm_test_run test_default_off_opens_nothing test_env_enables_and_click_answers \
   test_timeout test_json_answer_and_usage test_missing_module \
   test_json_shape_every_outcome test_caller_pattern test_multi_option_labels \
   test_option_count_bounds test_odd_prompts_never_crash test_small_unobtrusive_window \
+  test_long_prompt_gets_wide_roomy_window test_freetext_outcome test_freetext_caller_pattern test_free_text_ui_present \
   test_unavailable_paths test_timeout_default_and_override test_status_and_gating_precedence
