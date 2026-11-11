@@ -30,14 +30,14 @@ def run(p: config.Paths | None = None, eval_path=None, log=print) -> dict:
         out = []
         for it in items:
             r = go(it["q"])
-            out.append(dict(q=it["q"], rank=rank_of(r["hits"], it["want"]), top=r["top_score"],
+            out.append(dict(q=it["q"], rank=rank_of(r["hits"], it["want"]), top=r["lead_score"],
                             headline=bool(it.get("headline")), tier=r["tier"],
                             hit_score=next((h["score"] for h in r["hits"] if any(t in (h["path"] + h["title"]).lower() for t in it["want"])), None)))
         return out
 
     gold, held = block(spec["gold"]), block(spec["held"])
-    neg = [go(q)["top_score"] for q in spec["negatives"]["original"]]
-    hard = [go(q)["top_score"] for q in spec["negatives"]["hard"]]
+    neg = [go(q)["lead_score"] for q in spec["negatives"]["original"]]
+    hard = [go(q)["lead_score"] for q in spec["negatives"]["hard"]]
     g = eng.settings
     true_scores = [x["hit_score"] for x in gold + held if x["rank"] and x["hit_score"] is not None]
     low = g["low_gate"]

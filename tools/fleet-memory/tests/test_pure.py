@@ -105,6 +105,13 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(engine.tier_for(-8.6, SETTINGS), engine.LOW)
         self.assertEqual(engine.tier_for(-8.61, SETTINGS), engine.NONE)
 
+    def test_tier_follows_the_first_pointer_not_the_pool_maximum(self):
+        scores = {"junk-first": -10.2, "strong-second": -7.5}
+        order = engine.blend_order(["junk-first", "strong-second"], scores)
+        self.assertEqual(order[0], "junk-first")                      # tied blend keeps the fusion order
+        self.assertEqual(engine.tier_for(scores[order[0]], SETTINGS), engine.NONE)
+        self.assertEqual(engine.tier_for(max(scores.values()), SETTINGS), engine.LOW)
+
     def test_text_rendering_labels_tiers(self):
         base = dict(query="q", customers=[], ms=1, top_score=-7.0, hits=[
             dict(rank=1, title="T", date="2026-01-01", path="/p", why="w", confidence="low")])

@@ -57,11 +57,15 @@ def hit_confidence(score, settings):
     return NONE
 
 
-def tier_for(top_score, settings):
-    """Answer tier from the best reranker score of the candidate pool."""
-    if top_score >= settings["confident_gate"]:
+def tier_for(lead_score, settings):
+    """Answer tier from the reranker score of the pointer that would be shown first.
+
+    Using the first pointer, not the pool maximum, refuses a query whose only strong chunk sits in a
+    document the blend itself ranked below something the reranker rates as junk.
+    """
+    if lead_score >= settings["confident_gate"]:
         return CONF
-    if top_score >= settings["low_gate"]:
+    if lead_score >= settings["low_gate"]:
         return LOW
     return NONE
 
@@ -148,7 +152,7 @@ class Engine:
                          weights, boosted, s["rrf_k"], s["customer_boost"])
         docs = group_pool(order, s["pool"], s["chunks_per_doc"])
         if not docs:
-            return self._result(q, qx, ids, NONE, [], float("-inf"), t0)
+            return self._result(q, qx, ids, NONE, [], float("-inf"), float("-inf"), t0)
 
         pairs = [(p, key) for p, ks in docs.items() for key in ks]
         scores = self.reranker.predict([(q, info[key]["ctx"][:1500]) for _, key in pairs])   # ORIGINAL query
@@ -158,6 +162,7 @@ class Engine:
                 best[p] = (float(sc), key)
         ordered = blend_order(list(docs), {p: v[0] for p, v in best.items()})
         top = max(v[0] for v in best.values())
+        lead = best[ordered[0]][0]
 
         hits, seen_titles = [], set()
         for p in ordered:
@@ -177,14 +182,15 @@ class Engine:
             ))
             if len(hits) == k:
                 break
-        tier = tier_for(top, s)
+        tier = tier_for(lead, s)
         if tier == NONE and not raw:
             hits = []
-        return self._result(q, qx, ids, tier, hits, top, t0)
+        return self._result(q, qx, ids, tier, hits, top, lead, t0)
 
-    def _result(self, q, qx, ids, tier, hits, top, t0):
+    def _result(self, q, qx, ids, tier, hits, top, lead, t0):
         return dict(query=q, tier=tier, hits=hits, customers=ids, expanded=qx,
                     top_score=None if top == float("-inf") else round(top, 2),
+                    lead_score=None if lead == float("-inf") else round(lead, 2),
                     gates=dict(confident=self.settings["confident_gate"], low=self.settings["low_gate"]),
                     ms=round((time.time() - t0) * 1000))
 
@@ -192,7 +198,7 @@ class Engine:
 def format_text(res: dict) -> str:
     """Human rendering of a query result (the `--json` form is the machine contract)."""
     out = [f'Q: "{res["query"]}"  [customers: {",".join(res["customers"]) or "-"} | {res["ms"]} ms | '
-           f'top score {res["top_score"]}]']
+           f'score {res.get("lead_score", res["top_score"])}]']
     if res["tier"] == NONE:
         out.append("No confident match.")
         return "\n".join(out)
