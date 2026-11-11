@@ -1,0 +1,7 @@
+lancedb>=0.41
+sentence-transformers>=3
+pyarrow
+numpy
+beautifulsoup4
+lxml
+pyyaml

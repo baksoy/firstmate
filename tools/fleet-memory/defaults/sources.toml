@@ -1,0 +1,99 @@
+# Fleet Memory corpus definition. Copy to <memory home>/sources.toml to override; edit freely, then `fmem refresh`.
+#
+# Placeholders: {FM} = the firstmate home, {BUILDMATE} = buildmate's treehouse home
+# (override with FM_MEMORY_BUILDHOME), ~ = the user's home directory.
+# maxdepth N = files up to N directory levels below the root (0 = root only); mindepth N = at least N levels below.
+# Rules run top to bottom; the first rule to claim a file wins. Rule order is also the duplicate-election
+# priority (earlier beats later), after live paths beat ~/.treehouse copies.
+# weight < 1 down-weights a group's chunks in retrieval (they still win when they match strongly).
+# Never indexed, whatever the rule: node_modules, .git and other dot directories, target, _archive,
+# attachments, venv, site-packages, dist, build, vendor, __pycache__.
+
+# --- firstmate records and reports (both homes) -------------------------------------------------
+[[source]]
+group = "firstmate-records"
+roots = ["{FM}/data", "{BUILDMATE}/data"]
+names = ["done-archive.md", "learnings.md", "backlog.md"]   # named files only: loose research dumps in data/ flood the pool
+maxdepth = 0
+
+[[source]]
+group = "firstmate-reports"
+roots = ["{FM}/data", "{BUILDMATE}/data"]
+exts = [".md", ".html"]
+mindepth = 1                                   # per-task folders only; loose research dumps at the data/ root are not indexed
+maxdepth = 3
+exclude_names = ["brief.md", "launch-brief.md", "CHANGELOG.md"]
+exclude_parts = ["/fleet-memory-", "/poc-src/"]   # the librarian's own PoC reports quote every test query
+
+[[source]]
+group = "firstmate-lavish"
+roots = ["{FM}/.lavish", "{BUILDMATE}/.lavish"]
+exts = [".html"]
+
+# --- demo / walkthrough / deck artifacts anywhere under Development or buildmate's projects ----------
+[[source]]
+group = "demo-walkthrough-deck"
+roots = ["~/Development", "{BUILDMATE}/projects"]
+names = ["WALKTHROUGH.html", "DECK.html", "WALKTHROUGH.md", "DECK.md"]
+exclude_parts = ["/Development/firstmate/"]
+
+# --- project docs: README / AGENTS / CLAUDE at repo roots, and docs/ folders ---------------------------
+[[source]]
+group = "firstmate-projects"
+roots = ["{FM}/projects", "{BUILDMATE}/projects"]
+names = ["README.md", "AGENTS.md", "CLAUDE.md"]
+maxdepth = 2
+
+[[source]]
+group = "development-projects"
+roots = ["~/Development"]
+names = ["README.md", "AGENTS.md", "CLAUDE.md"]
+maxdepth = 3
+exclude_parts = ["/Development/firstmate/"]
+
+[[source]]
+group = "development-docs"
+roots = ["~/Development", "{FM}/projects", "{BUILDMATE}/projects"]
+exts = [".md"]
+require_part = "docs"
+maxdepth = 5
+exclude_parts = ["/Development/firstmate/data/", "/Development/firstmate/docs/"]
+
+# --- Obsidian vaults ---------------------------------------------------------------------------------
+[[source]]
+group = "vault-mulesoftkb-raw"              # vendor scrapes: down-weighted
+roots = ["~/Vaults/MuleSoftKB"]
+exts = [".md"]
+require_part = "raw"
+weight = 0.5
+
+[[source]]
+group = "vault-mulesoftkb"
+roots = ["~/Vaults/MuleSoftKB"]
+exts = [".md"]
+
+[[source]]
+group = "vault-work-customers"
+roots = ["~/Vaults/Work/Customers"]
+exts = [".md", ".html", ".mmd"]
+
+[[source]]
+group = "vault-work-deliverables"
+roots = ["~/Vaults/Work/Deliverables"]
+exts = [".md", ".html", ".mmd"]
+
+[[source]]
+group = "vault-work-meeting-prep"
+roots = ["~/Vaults/Work/Meeting Prep"]
+exts = [".md", ".html", ".mmd"]
+
+[[source]]
+group = "vault-work-reference"
+roots = ["~/Vaults/Work/Reference"]
+exts = [".md", ".html", ".mmd"]
+exclude_names = ["Skill Trigger Eval Log.md"]
+
+[[source]]
+group = "vault-work-agent-fabric"
+roots = ["~/Vaults/Work/MuleSoft Agent Fabric"]
+exts = [".md", ".html", ".mmd"]

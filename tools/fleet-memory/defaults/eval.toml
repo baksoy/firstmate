@@ -1,0 +1,109 @@
+# Fleet Memory eval set (ported from the PoC / pipeline-fix harness). Edit freely; `fmem eval` reads it.
+# `want` = substrings; a hit counts when any appears (lowercased) in the pointer's path + title.
+
+[[gold]]
+q = "USDA governance flow"
+want = ["usda"]
+[[gold]]
+q = "API-led governance for agriculture"
+want = ["usda"]
+[[gold]]
+q = "the thing for the Fed with the agent network and the proxy name fix"
+want = ["frb-agent-fabric-poc-proxy-name"]
+[[gold]]
+q = "FGIC agent fabric proof of concept"
+want = ["fdic"]
+[[gold]]
+q = "state department consular MCP demo walkthrough"
+want = ["dos-ca-mcp-demo", "dept of state"]
+[[gold]]
+q = "what did we do for Princeton"
+want = ["princeton"]
+[[gold]]
+q = "UMass deck"
+want = ["umass-poc-v1/deck"]
+[[gold]]
+q = "document extraction for the university in Georgia"
+want = ["mercer"]
+[[gold]]
+q = "IDP Mercer demo"
+want = ["mercer"]
+[[gold]]
+q = "CMS fraud flow"
+want = ["cms-fwa", "/cms.md"]
+[[gold]]
+q = "that walkthrough where the bot can't leak patient info while catching insurance cheats"
+want = ["cms-fwa-demo/walkthrough"]
+headline = true        # report number #11: must be rank 1
+[[gold]]
+q = "patent office industry day demo"
+want = ["uspto"]
+[[gold]]
+q = "the demo with the Slack bot that flags suspicious claims"
+want = ["slackbot", "cms-fwa"]
+[[gold]]
+q = "where is the SQL to ServiceNow thing for State"
+want = ["dos-sql-to-servicenow"]
+[[gold]]
+q = "ETS agent discovery poc scoping"
+want = ["ets"]
+[[gold]]
+q = "mizzou canvas slate enrollment"
+want = ["mizzou"]
+[[gold]]
+q = "Hard Rock agent network diagram"
+want = ["hard-rock", "hard rock"]
+[[gold]]
+q = "IRS refund agent demo"
+want = ["irs-refund"]
+
+[[held]]
+q = "that mock-up of the airport agents talking to each other"
+want = ["dfw"]
+[[held]]
+q = "the tax refund chatbot demo"
+want = ["irs-refund", "irs"]
+[[held]]
+q = "the casino loyalty agent diagram"
+want = ["hard-rock", "hard rock", "mohegan"]
+[[held]]
+q = "slides about carving a legacy monolith into pieces gradually for the fundraising office"
+want = ["um-advancement", "strangler"]
+[[held]]
+q = "weather radar data conversion proof of concept"
+want = ["noaa"]
+[[held]]
+q = "the writeup on passing the end user's identity through to backend systems safely"
+want = ["identity propagation", "identity-propagation", "agent oauth"]
+[[held]]
+q = "prep notes for the call with the rail company about their architecture"
+want = ["amtrak"]
+[[held]]
+q = "where did we write up government cloud availability for the platform"
+want = ["govcloud"]
+[[held]]
+q = "disaster relief insurance verification repo"
+want = ["fema"]
+[[held]]
+q = "keeping the AI from reading things it shouldn't, zero trust"
+want = ["zero trust"]
+
+[negatives]
+original = [
+  "recipe for sourdough bread starter",
+  "quantum computing error correction on the moon",
+  "best hiking trails in patagonia",
+  "how to train a golden retriever puppy",
+  "medieval castle architecture in scotland",
+  "guitar chord progressions for jazz",
+]
+hard = [
+  "how do I file my taxes online for free",
+  "best hospital in Boston for knee surgery",
+  "bank interest rates for savings accounts",
+  "how to apply for a tourist visa to Japan",
+  "blackjack card counting strategy at the casino",
+  "my insurance claim for a cracked phone screen",
+  "how to detect cheating in online chess",
+  "university rankings in the United States",
+]

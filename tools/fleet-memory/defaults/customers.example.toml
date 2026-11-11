@@ -1,0 +1,25 @@
+# Customer registry (example). The live, private copy is <memory home>/customers.toml; `fmem registry seed` creates it
+# from this file and then appends one entry per note in the Work vault's Customers folder.
+# Edit the live copy, then `fmem refresh` (document tags are rebuilt when the registry changes) - queries pick up edits
+# after `fmem reload` or a server restart.
+#
+#   id           stable slug, used as the customer facet
+#   name         canonical display name
+#   aliases      names for the customer in documents AND queries (strong; also tag documents)
+#   mishearings  speech-recognition slips, query side only (e.g. the spoken "FGIC" for FDIC)
+#   keywords     loose query-side hints (nicknames, topics); never tag documents
+#   geography    places, query side only ("the university in Georgia")
+#   products     products or themes worked with this customer (informational)
+#   repos        repo directory names; a path containing one tags the document
+#   vault_note   relative path of the customer note in the Work vault (informational)
+
+[[customer]]
+id = "acme-corp"
+name = "Acme Corp"
+aliases = ["Acme"]
+mishearings = ["acme corporation", "acne corp"]
+keywords = ["anvil", "road runner"]
+geography = ["phoenix"]
+products = ["Agent Fabric"]
+repos = ["acme-agent-demo"]
+vault_note = "Customers/Acme Corp.md"

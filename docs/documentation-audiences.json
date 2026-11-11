@@ -662,6 +662,14 @@
       "audience": "public-product"
     },
     {
+      "path": "tools/fleet-memory/README.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "tools/fleet-memory/requirements.txt",
+      "audience": "operator-current"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     },
