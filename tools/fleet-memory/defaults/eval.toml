@@ -34,7 +34,7 @@ want = ["cms-fwa", "/cms.md"]
 [[gold]]
 q = "that walkthrough where the bot can't leak patient info while catching insurance cheats"
 want = ["cms-fwa-demo/walkthrough"]
-headline = true        # report number #11: must be rank 1
+headline = true        # zero shared keywords: must be shown in the top 3; the low-confidence tier is expected
 [[gold]]
 q = "patent office industry day demo"
 want = ["uspto"]

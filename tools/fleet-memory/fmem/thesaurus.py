@@ -61,3 +61,29 @@ def expand(query: str, rules: list[Rule]) -> list[str]:
         if r.pattern.search(ql):
             out.extend(r.terms)
     return list(dict.fromkeys(out))
+
+
+def matched(query: str, rules: list[Rule]) -> list[Rule]:
+    """The rules whose lay terms occur in the query: each one is a distinct concept the query names in lay words."""
+    ql = query.lower()
+    return [r for r in rules if r.pattern.search(ql)]
+
+
+def _stem(word: str) -> str:
+    word = word.lower()
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def corroborated(rules: list[Rule], doc_words: set[str], cover: float) -> int:
+    """How many matched rules the document corroborates: at least `cover` of the rule's document nouns appear in it.
+
+    A document that holds the nouns for several different lay concepts of the question is a real neighbour of the
+    question even when the question shares no keyword with it; off-topic junk names at most one concept.
+    """
+    words = {_stem(w) for w in doc_words}
+    n = 0
+    for r in rules:
+        terms = {_stem(t) for t in r.terms}
+        if terms and len(terms & words) / len(terms) >= cover:
+            n += 1
+    return n

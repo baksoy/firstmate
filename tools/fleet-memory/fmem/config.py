@@ -24,6 +24,8 @@ DEFAULT_SETTINGS = {
     "chunks_per_doc": 20,      # rerank every chunk of the pool (a doc's best chunk is often not its top-3 by RRF)
     "customer_boost": 0.004,   # RRF bonus when query and chunk share a registry customer
     "k": 3,                    # pointers returned
+    "rescue_rules": 2,         # distinct thesaurus concepts a query must name, and a document corroborate, to rescue a hit
+    "rescue_cover": 0.5,       # share of a concept's document nouns the document must contain to count as corroborating
 }
 
 

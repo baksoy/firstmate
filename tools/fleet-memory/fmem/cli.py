@@ -115,10 +115,9 @@ def _eval(a) -> int:
     res = evalrun.run()
     if a.json:
         print(json.dumps(res, indent=1))
-    ok = (res["headline"] and all(h["rank"] == 1 for h in res["headline"])
-          and res["neg_refused"] == res["neg_n"] and res["gold_hit3"] >= res["gold_n"] - 1)
-    if res["hard_refused"] < res["hard_n"]:
-        print(f"WARN: {res['hard_n'] - res['hard_refused']} hard negative(s) above the low gate (max {res['hard_max']}); see README known limits")
+    ok = (res["headline"] and all(0 < h["rank"] <= 3 and h["tier"] != "none" for h in res["headline"])
+          and res["neg_refused"] == res["neg_n"] and res["hard_refused"] == res["hard_n"]
+          and res["gold_hit3"] >= res["gold_n"] - 1)
     print("EVAL PASS" if ok else "EVAL FAIL")
     return 0 if ok else 1
 

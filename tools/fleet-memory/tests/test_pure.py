@@ -119,6 +119,31 @@ class FusionTests(unittest.TestCase):
         self.assertIn("No confident match.", engine.format_text(dict(base, tier=engine.NONE, hits=[])))
 
 
+class RescueTests(unittest.TestCase):
+    def setUp(self):
+        self.rules = thesaurus.parse("cheat => fraud abuse\npatient => phi hipaa\nchess => board\n")
+
+    def test_corroboration_counts_concepts_the_document_holds(self):
+        doc = {"fraud", "abuse", "phi", "hipaa", "claims"}
+        self.assertEqual(thesaurus.corroborated(self.rules, doc, 0.5), 2)
+
+    def test_corroboration_matches_plurals_and_needs_the_cover_share(self):
+        self.assertEqual(thesaurus.corroborated(self.rules[:1], {"frauds"}, 0.5), 1)
+        self.assertEqual(thesaurus.corroborated(self.rules[:1], {"unrelated"}, 0.5), 0)
+
+    def test_matched_returns_only_rules_the_query_names(self):
+        self.assertEqual(len(thesaurus.matched("do patients cheat", self.rules)), 2)
+
+    def test_rescue_needs_two_concepts_in_query_and_document(self):
+        docs = {"real": {"fraud", "abuse", "phi", "hipaa"}, "stray": {"fraud", "abuse"}}
+        two = thesaurus.matched("patients who cheat", self.rules)
+        self.assertEqual(engine.rescue(["real", "stray"], docs.__getitem__, two, SETTINGS), ["real"])
+
+    def test_one_concept_query_rescues_nothing(self):
+        one = thesaurus.matched("online chess cheating", self.rules[:1])
+        self.assertEqual(engine.rescue(["real"], lambda p: {"fraud", "abuse"}, one, SETTINGS), [])
+
+
 class CanonicalTests(unittest.TestCase):
     def entry(self, sha, rkey=None, prio=0, mtime=1.0):
         return dict(sha1=sha, rkey=rkey, prio=prio, mtime=mtime)

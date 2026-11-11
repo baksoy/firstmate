@@ -70,6 +70,20 @@ def tier_for(lead_score, settings):
     return NONE
 
 
+def rescue(candidates, doc_words, rules, settings):
+    """Hits that clear the low gate but sit behind a junk lead: keep those a document-side signal corroborates.
+
+    candidates: ordered doc paths whose best reranker score is at or above low_gate. A query that names at least
+    `rescue_rules` distinct lay concepts (thesaurus rules) is rescued for the candidates whose document holds the
+    nouns of that many of them. A query naming one concept (an off-topic "chess cheating") rescues nothing.
+    """
+    need = settings["rescue_rules"]
+    if len(rules) < need:
+        return []
+    return [p for p in candidates
+            if thesaurus_mod.corroborated(rules, doc_words(p), settings["rescue_cover"]) >= need]
+
+
 def one_line(text, n=140):
     return " ".join(text.split())[:n]
 
@@ -127,6 +141,12 @@ class Engine:
             except Exception:
                 return []
 
+    def _doc_words(self, path):
+        """Lower-cased word set of a whole indexed document (read at query time, only on the rescue path)."""
+        safe = path.replace("'", "''")
+        rows = self.tbl.search().where(f"path = '{safe}'").select(["text"]).limit(5000).to_list()
+        return set(re.findall(r"[a-z0-9]+", " ".join(r["text"] for r in rows).lower()))
+
     def query(self, q: str, k: int | None = None, raw: bool = False) -> dict:
         """raw=True keeps below-gate hits (eval harness only); the public contract never shows them."""
         t0 = time.time()
@@ -183,8 +203,16 @@ class Engine:
             if len(hits) == k:
                 break
         tier = tier_for(lead, s)
-        if tier == NONE and not raw:
-            hits = []
+        if tier == NONE:
+            kept = rescue([p for p in ordered if best[p][0] >= s["low_gate"]], self._doc_words,
+                          thesaurus_mod.matched(q, self.rules), s)
+            if kept:
+                tier, keep = LOW, set(kept)
+                hits = [h for h in hits if h["path"] in keep]
+                for i, h in enumerate(hits, 1):
+                    h["rank"], h["confidence"] = i, "low"
+            elif not raw:
+                hits = []
         return self._result(q, qx, ids, tier, hits, top, lead, t0)
 
     def _result(self, q, qx, ids, tier, hits, top, lead, t0):

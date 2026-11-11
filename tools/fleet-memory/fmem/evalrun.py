@@ -36,8 +36,9 @@ def run(p: config.Paths | None = None, eval_path=None, log=print) -> dict:
         return out
 
     gold, held = block(spec["gold"]), block(spec["held"])
-    neg = [go(q)["lead_score"] for q in spec["negatives"]["original"]]
-    hard = [go(q)["lead_score"] for q in spec["negatives"]["hard"]]
+    neg_r = [go(q) for q in spec["negatives"]["original"]]
+    hard_r = [go(q) for q in spec["negatives"]["hard"]]
+    neg, hard = [r["lead_score"] for r in neg_r], [r["lead_score"] for r in hard_r]
     g = eng.settings
     true_scores = [x["hit_score"] for x in gold + held if x["rank"] and x["hit_score"] is not None]
     low = g["low_gate"]
@@ -47,8 +48,8 @@ def run(p: config.Paths | None = None, eval_path=None, log=print) -> dict:
         headline=[dict(q=x["q"], rank=x["rank"], score=x["hit_score"], tier=x["tier"]) for x in gold if x["headline"]],
         weakest_true_hit=min(true_scores) if true_scores else None,
         neg_max=max(neg), hard_max=max(hard),
-        neg_refused=sum(s < low for s in neg), neg_n=len(neg),
-        hard_refused=sum(s < low for s in hard), hard_n=len(hard),
+        neg_refused=sum(r["tier"] == "none" for r in neg_r), neg_n=len(neg),
+        hard_refused=sum(r["tier"] == "none" for r in hard_r), hard_n=len(hard),
         median_ms=round(statistics.median(lat)), p90_ms=sorted(lat)[int(0.9 * len(lat))],
         gates=dict(confident=g["confident_gate"], low=low),
         gold=gold, held=held,
